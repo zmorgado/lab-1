@@ -1,0 +1,19 @@
+Based on https://share.gemini.google/MDdnNLphDZxj
+
+Blackbird - GitHub search engine
+
+
+- GitHub's search bar has a character limit for queries
+- breaks the pasted code string down into 3-character sequences (trigrams) (cannot match code based on functional similarity or semantic concept— relies strictly on text-based trigram matching)
+- best if unique function names, class definitions, or rare variable names
+- double quotes (e.g., "function computeMatrix(a, b)") forces an exact phrase match
+
+Structure 
+
+- V0: simple search based on syntax similarity
+
+- V1: advanced vector search engine
+
+- V2: interactive web / plugin tool / MCP allowing users to vectorize their code for an enhanced match with V1 output
+
+
