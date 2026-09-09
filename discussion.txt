@@ -12,8 +12,64 @@ Structure
 
 - V0: simple search based on syntax similarity
 
-- V1: advanced vector search engine
+- V1: embeded vector search engine for seacond, fine tuned filter, for functional-conceptual comparison maximization on previously reduced search space on V0 phase
 
 - V2: interactive web / plugin tool / MCP allowing users to vectorize their code for an enhanced match with V1 output
 
+
+*V2 -Flujo general de parseo, embebimiento del codigo en un espacio vectorial, y por ultimo metrica de similitud entre scripts previemente vectirizados*
+
+    Para revisar:
+        a) definir un numero critico de pulls de la fase V0 en base al costo computacional de el embebimiento y el costo posterior de la fase comparativa entre vectores.
+            (las cotas de complejidad temporal y espacial estan los pds pusheados)
+        b) definir una app sobre la cual poder correr el embebimiento
+        c) *Pelu* fijate que en el proceso de generado del AST (La estructura de datos sobre la cual se almacena y purga el codigo para despues ser embebido) tiene un proceso de
+              definicion de importancia de funciones, llamados a APIs y borrado de palabras intrascendentes en el codigo, asi que quiza V2a y V0 son el mismo proceso.
+
+┌────────────────────────────────────────────────────────────────────────┐
+│                      1. ENTRADA Y PARSEO DE CÓDIGO                     │
+└────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │  • Código Fuente / Consulta de Concepto                                │
+ │  • Parseo Sintáctico Incremental (Tree-sitter) en O(N)                 │
+ │  • Generación de Árbol de Sintaxis Abstracta (AST)                     │
+ └────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │                   2. FRAGMENTACIÓN Y EXTRACCIÓN SINTÁCTICA             │
+ └────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │  • Delimitación por límites de alcance del AST (Funciones/Clases)      │
+ │  • Eliminación de ruido sintáctico (nombres locales, formato)          │
+ │  • Enriquecimiento con Metadatos del AST (Clase padre, imports)        │
+ └────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │                3. VECTORIZACIÓN Y REDUCCIÓN DE BÚSQUEDA                │
+ └────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │  • Generación de Vector Denso via Modelo de Embedding (UniXcoder)      │
+ │  • Filtrado de Corpúreo (Lenguaje, Estrellas/Rating) -> Reduce >99.99% │
+ │  • Recuperación de Candidatos (Etapa 1: Filtro API / Palabras clave)   │
+ └────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │                 4. EVALUACIÓN DE SIMILITUD Y REORDENAMIENTO            │
+ └────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │  • Cálculo de Similitud de Coseno en el Espacio Vectorial              │
+ │  • Evaluación Direccional A · B / (||A|| ||B||)                        │
+ │  • Reordenamiento (Reranking) y Presentación de Código Equivalente     │
+ └────────────────────────────────────────────────────────────────────────┘
 
