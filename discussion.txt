@@ -17,14 +17,14 @@ Structure
 - V2: interactive web / plugin tool / MCP allowing users to vectorize their code for an enhanced match with V1 output
 
 
-*V2 -Flujo general de parseo, embebimiento del codigo en un espacio vectorial, y por ultimo metrica de similitud entre scripts previemente vectirizados*
+*V1 -Flujo general de parseo, embebimiento del codigo en un espacio vectorial, y por ultimo metrica de similitud entre scripts previemente vectirizados*
 
     Para revisar:
         a) definir un numero critico de pulls de la fase V0 en base al costo computacional de el embebimiento y el costo posterior de la fase comparativa entre vectores.
             (las cotas de complejidad temporal y espacial estan los pds pusheados)
         b) definir una app sobre la cual poder correr el embebimiento
         c) *Pelu* fijate que en el proceso de generado del AST (La estructura de datos sobre la cual se almacena y purga el codigo para despues ser embebido) tiene un proceso de
-              definicion de importancia de funciones, llamados a APIs y borrado de palabras intrascendentes en el codigo, asi que quiza V2a y V0 son el mismo proceso.
+              definicion de importancia de funciones, llamados a APIs y borrado de palabras intrascendentes en el codigo, asi que quiza V1a y V0 son el mismo proceso.
 
 ┌────────────────────────────────────────────────────────────────────────┐
 │                      1. ENTRADA Y PARSEO DE CÓDIGO                     │
