@@ -6,6 +6,8 @@ export default mergeConfig(
   viteConfig,
   defineConfig({
     test: {
+      // 'node' cubre las funciones puras de hoy; un test de componente o hook
+      // que toque el DOM va a necesitar sumar jsdom/happy-dom antes de andar.
       environment: 'node',
     },
   }),
