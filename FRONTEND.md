@@ -20,3 +20,5 @@ Vitest is the test runner (native to the Vite build tool, so `vitest.config.ts` 
 - Run everything: `pnpm test`
 - Run one file: `pnpm test src/utility/ToggleArrayItem.test.ts`
 - Run by test name: `pnpm test -t "<name>"` (no extra `--` before `-t`, or the flag doesn't reach Vitest through pnpm)
+
+`pnpm test` covers the frontend only. The Python service in `backend/` has its own runner (`uv run pytest`, from `backend/`) — see `BACKEND.md`.

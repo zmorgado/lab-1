@@ -39,9 +39,10 @@ pnpm dev      # vite dev server
 pnpm build    # tsc -b && vite build — typecheck is part of the build
 pnpm lint     # eslint .
 pnpm preview
+pnpm test     # vitest run — frontend only
 ```
 
-There is **no test runner configured** — no test script, no vitest/jest dependency, no test files. `tests.md` on `main` is a captured API response, not a test suite. If asked to run tests, say so rather than inventing a command; adding a runner is a real (unmade) decision.
+`pnpm test` runs **Vitest** (`vitest run`, single pass, non-zero on failure); tests are colocated `*.test.ts` files. It covers the frontend only — the Python service in `backend/` has its own runner (`uv run pytest`). See `FRONTEND.md` and `BACKEND.md`. `tests.md` on `main` is a captured API response, not a test suite.
 
 ## Frontend architecture
 
