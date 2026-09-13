@@ -2,14 +2,14 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Branch layout — read this first
+## Repo layout — read this first
 
-The repo is split across two branches with almost nothing in common:
+`main` carries everything: the design notes (`discussion.txt`, reference PDFs, `tests.md`) plus the code, since `feature/initial-frontend` was merged in PR #16. Two codebases sit side by side, with separate toolchains:
 
-- `**main**` — design notes only (`discussion.txt`, reference PDFs, `tests.md`). No code, no tooling.
-- `**origin/feature/initial-frontend**` — the actual application: a React + TypeScript + Vite frontend. Not merged into `main`, and it does not contain `tests.md`.
+- **root** — the React + TypeScript + Vite frontend (`src/`, `package.json`, pnpm).
+- **`backend/`** — the Python service (`pyproject.toml`, uv), which will hold the code-search proxy (#3) and, later, V1's embedding stage. Scaffolding only so far: no endpoints yet.
 
-Check which branch you are on before concluding a file doesn't exist. Code work happens on the feature branch; the notes below under "Project: LAB #1" are the design intent that lives on `main`.
+`origin/feature/initial-frontend` still exists but is behind `main`; work from `main`. The notes below under "Project: LAB #1" are the design intent.
 
 Source comments are written in Spanish, prose/UI strings in English. Follow suit; keep identifiers English.
 
@@ -29,9 +29,9 @@ Consequences worth keeping in mind when planning work:
 - A strictly vertical slice tends to cross all three lanes at once. Prefer slicing so that a ticket sits in one lane where possible, and call it out explicitly when a ticket genuinely spans two.
 - `discussion.txt` is written by the team to each other and addresses people by name (e.g. the note beginning *"Pelu, fijate que..."*). Read it as meeting notes, not as spec prose.
 
-## Commands (feature/initial-frontend only)
+## Commands
 
-Package manager is **pnpm** (`pnpm-lock.yaml`).
+Frontend, from the repo root. Package manager is **pnpm** (`pnpm-lock.yaml`).
 
 ```
 pnpm install
@@ -39,10 +39,17 @@ pnpm dev      # vite dev server
 pnpm build    # tsc -b && vite build — typecheck is part of the build
 pnpm lint     # eslint .
 pnpm preview
-pnpm test     # vitest run — frontend only
+pnpm test     # vitest run
 ```
 
-`pnpm test` runs **Vitest** (`vitest run`, single pass, non-zero on failure); tests are colocated `*.test.ts` files. It covers the frontend only — the Python service in `backend/` has its own runner (`uv run pytest`). See `FRONTEND.md` and `BACKEND.md`. `tests.md` on `main` is a captured API response, not a test suite.
+Backend, from `backend/`. Package manager and task runner is **uv** (`backend/uv.lock`).
+
+```
+uv sync
+uv run pytest
+```
+
+**The two test commands are separate and neither runs the other**: `pnpm test` is Vitest over the frontend, `uv run pytest` is pytest over the Python service. See `FRONTEND.md` and `BACKEND.md` for how to run a single test in each. `tests.md` is a captured API response, not a test suite; nothing runs in CI, because there is no CI.
 
 ## Frontend architecture
 
@@ -56,7 +63,7 @@ The directory names encode a layering that is worth respecting:
 - `utility/` — pure helpers *and* React hooks (`UseDismissable`, `UseFocusWhen`, `UseScrollIntoView`), despite the name.
 - `components/`, `pages/`, `layouts/` — presentation. `pages/Search.tsx` holds essentially all search state and orchestration.
 
-`README.md` on that branch is the **stock Vite template readme**, not project documentation.
+There is no `README.md`: #2 renamed the stock Vite template readme to `FRONTEND.md` and replaced it with real frontend docs.
 
 ### The search flow
 

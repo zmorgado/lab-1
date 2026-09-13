@@ -1,9 +1,8 @@
 # Backend
 
 Python service for LAB #1, living in `backend/`. It will hold the authenticated
-GitHub code-search proxy (#3) and, later, V1's embedding stage — Python because
-the embedding tooling (UniXcoder/CodeBERT-style) is Python-native regardless, so
-one runtime beats a TS proxy plus a Python embedding service.
+GitHub code-search proxy (#3) and, later, V1's embedding stage — see the stack
+decision on #3 for why it is Python rather than Node/TS.
 
 Right now it is scaffolding only: `src/code_search_proxy/` has no endpoints yet.
 
@@ -11,7 +10,8 @@ Right now it is scaffolding only: `src/code_search_proxy/` has no endpoints yet.
 
 Package manager and task runner is **uv** (`backend/uv.lock`). Run everything
 from `backend/`; `uv run` creates and syncs `.venv` on its own, so there is no
-separate activate step.
+separate activate step, and `.python-version` pins the interpreter (3.12) so the
+lockfile resolves the same way for everyone.
 
 ```
 uv sync                 # install deps into backend/.venv
@@ -25,7 +25,7 @@ uv run pytest           # run the test suite — exits non-zero on failure
 FastAPI's own docs are written against, so `TestClient` and app-config fixtures
 work as documented once #3 lands the app.
 
-The package uses a **src layout** (`src/code_search_proxy/`), and `uv run`
+The package uses a **src layout** (`src/code_search_proxy/`), and `uv sync`
 installs it editable, so tests import `code_search_proxy` as an installed package
 — no `sys.path` juggling and no `conftest.py` needed for imports. Tests live in
 `backend/tests/`, mirroring the module they cover, not colocated (that differs
@@ -37,5 +37,5 @@ from the frontend, where Vitest tests sit next to the source).
 - Run every test matching a substring: `uv run pytest -k importable`
 
 This is **separate from the frontend's `pnpm test`** (Vitest, run from the repo
-root — see `FRONTEND.md`). Neither command runs the other; CI and local checks
-need both.
+root — see `FRONTEND.md`). Neither command runs the other, so a full local check
+means running both. Nothing enforces that yet: the repo has no CI.
