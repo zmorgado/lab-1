@@ -148,3 +148,11 @@ The five canonical roles, each label string equal to its name. See `docs/agents/
 ### Domain docs
 
 Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Reference
+
+ee gitee.com/explore/all 
+
+and Gitcode [gitcode.com](http://gitcode.com) 
+
+dont forget to translate the page

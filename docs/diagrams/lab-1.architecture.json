@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "LAB #1 — Pipeline de búsqueda",
+    "quality_profile": "showcase",
+    "repository": { "url": "https://github.com/zmorgado/lab-1", "provider": "github", "revision": "d9419ff1d187f10878e2e7805e5087cf3aad8aaa" }
+  },
+  "components": [
+    { "id": "user", "type": "external", "label": "Usuario", "sublabel": "pega un snippet", "pos": [40, 200], "size": [150, 64] },
+    { "id": "tags", "type": "backend", "label": "Tags + AST", "sublabel": "grep / regex", "tag": "3 niveles", "pos": [250, 200], "size": [150, 64], "sources": [{ "path": "generacion-de-tags-query.py" }] },
+    { "id": "llm", "type": "external", "label": "LLM externo", "sublabel": "algoritmos · partes clave", "pos": [460, 200], "size": [170, 64] },
+    { "id": "unix", "type": "backend", "label": "UniXcoder", "sublabel": "768d · coseno", "pos": [690, 200], "size": [150, 64] },
+    { "id": "format", "type": "backend", "label": "Formateo + selección", "sublabel": "top-k repos / snippets", "pos": [900, 200], "size": [180, 64] },
+    { "id": "ui", "type": "frontend", "label": "Frontend", "sublabel": "React · resultados", "pos": [1140, 200], "size": [150, 64] },
+    { "id": "github", "type": "external", "label": "GitHub API", "sublabel": "search/code", "pos": [460, 380], "size": [170, 64] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "backend/ · Python (uv)", "wraps": ["tags", "llm", "unix", "format"] }
+  ],
+  "connections": [
+    { "id": "user-tags", "from": "user", "to": "tags", "label": "snippet", "variant": "emphasis" },
+    { "id": "tags-llm", "from": "tags", "to": "llm", "label": "tags", "variant": "emphasis" },
+    { "id": "llm-unix", "from": "llm", "to": "unix", "label": "anclas", "variant": "emphasis" },
+    { "id": "unix-format", "from": "unix", "to": "format", "label": "scores", "variant": "emphasis" },
+    { "id": "format-ui", "from": "format", "to": "ui", "variant": "emphasis" },
+    { "id": "tags-github", "from": "tags", "to": "github", "label": "query", "variant": "dashed" },
+    { "id": "github-unix", "from": "github", "to": "unix", "label": "candidatos", "variant": "dashed" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "1 · Tags + AST", "items": ["Regex tipo grep: imports, llamadas, docstrings", "Hasta 6 tags priorizados por nivel", "Arma la query de search/code"] },
+    { "dot": "violet", "title": "2 · LLM + UniXcoder", "items": ["El LLM marca algoritmos y partes importantes", "UniXcoder embebe snippet y candidatos", "Similitud coseno, nunca suma de vectores"] },
+    { "dot": "amber", "title": "3 · Salida", "items": ["Ordena y deduplica candidatos", "Devuelve repos + snippets al usuario", "Sin vector store externo por ahora"] }
+  ]
+}
