@@ -28,8 +28,23 @@ def extract_tags_and_build_github_query_regex(
     imports = re.findall(r'^(?:import|from)\s+([a-zA-Z_]\w*)', code_snippet, re.MULTILINE)
     tier_1_apis.update(imports)
 
-    # Nivel 1: Invocaciones (palabras seguidas de paréntesis, ignorando 'def')
-    # Usa un "negative lookbehind" (? 2])
+    # Nivel 1: Invocaciones (palabras seguidas de parentesis, ignorando 'def')
+    # Usa un "negative lookbehind" (?<!def ) para no confundir la declaracion de
+    # una funcion con una llamada: 'def rank(...)' declara, 'sorted(...)' invoca.
+    calls = re.findall(r'(?<!def )\b([a-zA-Z_]\w*)\s*\(', code_snippet)
+    tier_1_apis.update(calls)
+
+    # Nivel 1: Metodos encadenados sobre un objeto ('d.items()' aporta 'items',
+    # que es la parte distintiva; el nombre de la variable no lo es).
+    methods = re.findall(r'\.([a-zA-Z_]\w*)\s*\(', code_snippet)
+    tier_1_apis.update(methods)
+
+    # Nivel 2: Declaraciones propias (def/class) y lambdas. Son estructura, no
+    # API: dicen como esta armado el snippet, asi que van despues del nivel 1.
+    definitions = re.findall(r'^\s*(?:def|class)\s+([a-zA-Z_]\w*)', code_snippet, re.MULTILINE)
+    tier_2_structures.update(d for d in definitions if len(d) > 2)
+    if re.search(r'\blambda\b', code_snippet):
+        tier_2_structures.add("lambda")
 
     # Nivel 3: Docstrings (contenido entre comillas triples simples o dobles)
     docstrings = re.findall(r'\"\"\"(.*?)\"\"\"|\'\'\'(.*?)\'\'\'', code_snippet, re.DOTALL)

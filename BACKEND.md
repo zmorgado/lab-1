@@ -1,10 +1,17 @@
 # Backend
 
-Python service for LAB #1, living in `backend/`. It will hold the authenticated
-GitHub code-search proxy (#3) and, later, V1's embedding stage — see the stack
-decision on #3 for why it is Python rather than Node/TS.
+Python service for LAB #1, living in `backend/`. It holds the whole pipeline —
+see the stack decision on #3 for why it is Python rather than Node/TS:
+
+- the authenticated GitHub proxy: code search and file fetching (#3)
+- query building and execution, moved out of the frontend (#19)
+- grep tag extraction (#4) and the LLM tag service (#7)
+- the AST stage: parse, isolate subtrees, prune (#20)
+- the embedding stage: UniXcoder + cosine ranking (#21, after the #18 spike)
+- the result mapper the frontend renders (#8) and error codes (#9)
 
 Right now it is scaffolding only: `src/code_search_proxy/` has no endpoints yet.
+#3 is the first one and brings the app skeleton with it. Issue #1 is the spec.
 
 ## Commands
 

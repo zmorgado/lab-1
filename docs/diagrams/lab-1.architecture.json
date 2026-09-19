@@ -4,32 +4,212 @@
   "meta": {
     "title": "LAB #1 — Pipeline de búsqueda",
     "quality_profile": "showcase",
-    "repository": { "url": "https://github.com/zmorgado/lab-1", "provider": "github", "revision": "d9419ff1d187f10878e2e7805e5087cf3aad8aaa" }
+    "repository": {
+      "url": "https://github.com/zmorgado/lab-1",
+      "provider": "github",
+      "revision": "4516fa65d37320a4190667f65554bc6a4f8cd969"
+    }
   },
   "components": [
-    { "id": "user", "type": "external", "label": "Usuario", "sublabel": "pega un snippet", "pos": [40, 200], "size": [150, 64] },
-    { "id": "tags", "type": "backend", "label": "Tags + AST", "sublabel": "grep / regex", "tag": "3 niveles", "pos": [250, 200], "size": [150, 64], "sources": [{ "path": "generacion-de-tags-query.py" }] },
-    { "id": "llm", "type": "external", "label": "LLM externo", "sublabel": "algoritmos · partes clave", "pos": [460, 200], "size": [170, 64] },
-    { "id": "unix", "type": "backend", "label": "UniXcoder", "sublabel": "768d · coseno", "pos": [690, 200], "size": [150, 64] },
-    { "id": "format", "type": "backend", "label": "Formateo + selección", "sublabel": "top-k repos / snippets", "pos": [900, 200], "size": [180, 64] },
-    { "id": "ui", "type": "frontend", "label": "Frontend", "sublabel": "React · resultados", "pos": [1140, 200], "size": [150, 64] },
-    { "id": "github", "type": "external", "label": "GitHub API", "sublabel": "search/code", "pos": [460, 380], "size": [170, 64] }
-  ],
-  "boundaries": [
-    { "kind": "region", "label": "backend/ · Python (uv)", "wraps": ["tags", "llm", "unix", "format"] }
+    {
+      "id": "input",
+      "type": "external",
+      "label": "Input (script)",
+      "sublabel": "snippet del usuario",
+      "pos": [
+        40,
+        300
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "llm",
+      "type": "external",
+      "label": "LLM",
+      "sublabel": "algoritmos · partes clave",
+      "pos": [
+        300,
+        60
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "select",
+      "type": "frontend",
+      "label": "Selección de tags",
+      "sublabel": "+ custom tags del user",
+      "pos": [
+        570,
+        60
+      ],
+      "size": [
+        180,
+        64
+      ]
+    },
+    {
+      "id": "github",
+      "type": "external",
+      "label": "GitHub",
+      "sublabel": "search/code",
+      "pos": [
+        950,
+        60
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "grep",
+      "type": "backend",
+      "label": "GREP service",
+      "sublabel": "tags · AST (A) y (B)",
+      "pos": [
+        560,
+        300
+      ],
+      "size": [
+        200,
+        80
+      ],
+      "sources": [
+        {
+          "path": "docs/research/generacion-de-tags-query.py"
+        }
+      ]
+    },
+    {
+      "id": "prune",
+      "type": "backend",
+      "label": "Pruning",
+      "sublabel": "validación de longitud",
+      "pos": [
+        950,
+        560
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "unix",
+      "type": "backend",
+      "label": "UniXcoder",
+      "sublabel": "768d · coseno",
+      "pos": [
+        570,
+        560
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "top",
+      "type": "frontend",
+      "label": "TOP n candidates",
+      "sublabel": "repos + snippets",
+      "pos": [
+        280,
+        560
+      ],
+      "size": [
+        170,
+        64
+      ]
+    }
   ],
   "connections": [
-    { "id": "user-tags", "from": "user", "to": "tags", "label": "snippet", "variant": "emphasis" },
-    { "id": "tags-llm", "from": "tags", "to": "llm", "label": "tags", "variant": "emphasis" },
-    { "id": "llm-unix", "from": "llm", "to": "unix", "label": "anclas", "variant": "emphasis" },
-    { "id": "unix-format", "from": "unix", "to": "format", "label": "scores", "variant": "emphasis" },
-    { "id": "format-ui", "from": "format", "to": "ui", "variant": "emphasis" },
-    { "id": "tags-github", "from": "tags", "to": "github", "label": "query", "variant": "dashed" },
-    { "id": "github-unix", "from": "github", "to": "unix", "label": "candidatos", "variant": "dashed" }
-  ],
-  "cards": [
-    { "dot": "cyan", "title": "1 · Tags + AST", "items": ["Regex tipo grep: imports, llamadas, docstrings", "Hasta 6 tags priorizados por nivel", "Arma la query de search/code"] },
-    { "dot": "violet", "title": "2 · LLM + UniXcoder", "items": ["El LLM marca algoritmos y partes importantes", "UniXcoder embebe snippet y candidatos", "Similitud coseno, nunca suma de vectores"] },
-    { "dot": "amber", "title": "3 · Salida", "items": ["Ordena y deduplica candidatos", "Devuelve repos + snippets al usuario", "Sin vector store externo por ahora"] }
+    {
+      "id": "input-grep",
+      "from": "input",
+      "to": "grep",
+      "variant": "emphasis",
+      "toSide": "left",
+      "fromSide": "right"
+    },
+    {
+      "id": "input-llm",
+      "from": "input",
+      "to": "llm",
+      "variant": "emphasis"
+    },
+    {
+      "id": "llm-select",
+      "from": "llm",
+      "to": "select",
+      "label": "más tags",
+      "variant": "emphasis"
+    },
+    {
+      "id": "grep-select",
+      "from": "grep",
+      "to": "select",
+      "label": "tags",
+      "variant": "emphasis",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "select-github",
+      "from": "select",
+      "to": "github",
+      "label": "lista definitoria de tags",
+      "variant": "emphasis"
+    },
+    {
+      "id": "github-grep",
+      "from": "github",
+      "to": "grep",
+      "label": "scripts similares",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "right"
+    },
+    {
+      "id": "grep-prune",
+      "from": "grep",
+      "to": "prune",
+      "label": "AST candidates (B)",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "prune-unix",
+      "from": "prune",
+      "to": "unix",
+      "label": "valid AST candidates (b)",
+      "variant": "emphasis"
+    },
+    {
+      "id": "grep-unix",
+      "from": "grep",
+      "to": "unix",
+      "label": "input AST (A)",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        560,
+        470
+      ]
+    },
+    {
+      "id": "unix-top",
+      "from": "unix",
+      "to": "top",
+      "variant": "emphasis"
+    }
   ]
 }

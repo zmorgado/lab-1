@@ -4,14 +4,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repo layout — read this first
 
-`main` carries everything: the design notes (`discussion.txt`, reference PDFs, `tests.md`) plus the code, since `feature/initial-frontend` was merged in PR #16. Two codebases sit side by side, with separate toolchains:
+`main` carries everything: the design sources plus the code, since `feature/initial-frontend` was merged in PR #16. Two codebases sit side by side, with separate toolchains:
 
 - **root** — the React + TypeScript + Vite frontend (`src/`, `package.json`, pnpm).
-- **`backend/`** — the Python service (`pyproject.toml`, uv), which will hold the code-search proxy (#3) and, later, V1's embedding stage. Scaffolding only so far: no endpoints yet.
+- **`backend/`** — the Python service (`pyproject.toml`, uv). It will hold the whole pipeline: proxy, tag extraction, AST stage and embeddings. Scaffolding only so far: no endpoints yet.
+- **`docs/research/`** — the design sources: `solution-schematics-v2.md`, `multiple-snippet-sorting-solution.md`, the reference PDFs, `discussion.txt`, `tests.md` and the `generacion-de-tags-query.py` sketch. Committed sources, not generated output — cite them rather than re-deriving.
+- **`docs/diagrams/`** — the architecture diagram (`lab-1.architecture.html`, generated from `lab-1.architecture.json`).
+- **`docs/agents/`** — how agent skills should use this repo's tracker, labels and domain docs.
 
-`origin/feature/initial-frontend` still exists but is behind `main`; work from `main`. The notes below under "Project: LAB #1" are the design intent.
+`origin/feature/initial-frontend` still exists but is behind `main`; work from `main`.
 
-Source comments are written in Spanish, prose/UI strings in English. Follow suit; keep identifiers English.
+Source comments are written in Spanish, prose/UI strings in English. Follow suit; keep identifiers English. Issues are written in English too.
+
+## Where the plan lives
+
+**GitHub issue #1 is the spec.** It holds the pipeline, the decisions, what's out of scope and the ticket map. Read it before planning work — it's more current than any file in the repo.
+
+`docs/research/solution-schematics-v2.md` is the authoritative pipeline description and supersedes the first version. `multiple-snippet-sorting-solution.md` justifies the AST subtree filtering. `discussion.txt` is the original meeting notes: it's historical, written by the team to each other, and addresses people by name (*"Pelu, fijate que..."*). Read it as notes, not as spec prose.
 
 ## Team and ownership
 
@@ -19,15 +28,14 @@ Three people, working on this as a research project / hobby. Ownership was agree
 
 | Person | Lane |
 | --- | --- |
-| **pelusa** ("pelu") — `@zmorgado` — programming technician, few years' professional experience | Reducing a pasted snippet to the handful of terms most likely to be distinctive: unique function names, class declarations, rare identifiers |
+| **pelusa** ("pelu") — `@zmorgado` — programming technician, few years' professional experience | Reducing a pasted snippet to the terms most likely to be distinctive, and the AST work that grew out of it |
 | **socio** — `@nicocernadas` — recently finished a programming associate's degree | Search options, filters, output review and parsing |
 | **cebolla** — `@theonobile01` — studying data science, strong maths background | Embeddings, search improvements, how GitHub does this, research |
 
 Consequences worth keeping in mind when planning work:
 
-- The lanes map onto the V0/V1 staging: pelu owns V0's recall reduction, socio owns everything around the query and its results, cebolla owns the V1 precision stage and the research feeding it.
-- A strictly vertical slice tends to cross all three lanes at once. Prefer slicing so that a ticket sits in one lane where possible, and call it out explicitly when a ticket genuinely spans two.
-- `discussion.txt` is written by the team to each other and addresses people by name (e.g. the note beginning *"Pelu, fijate que..."*). Read it as meeting notes, not as spec prose.
+- A strictly vertical slice tends to cross all three lanes at once. Prefer slicing so that a ticket sits in one lane where possible, and call it out explicitly when a ticket genuinely spans two (#22 does, and says so).
+- The lanes are a guide, not the tracker. **Who owns what is whatever the issue's assignee says**, and the team changes those by hand. Don't reassign to match this table.
 
 ## Commands
 
@@ -49,7 +57,29 @@ uv sync
 uv run pytest
 ```
 
-**The two test commands are separate and neither runs the other**: `pnpm test` is Vitest over the frontend, `uv run pytest` is pytest over the Python service. See `FRONTEND.md` and `BACKEND.md` for how to run a single test in each. `tests.md` is a captured API response, not a test suite; nothing runs in CI, because there is no CI.
+**The two test commands are separate and neither runs the other**: `pnpm test` is Vitest over the frontend, `uv run pytest` is pytest over the Python service. See `FRONTEND.md` and `BACKEND.md` for how to run a single test in each. `docs/research/tests.md` is a captured API response, not a test suite; nothing runs in CI, because there is no CI.
+
+## The pipeline
+
+A GitHub-backed search engine: paste a snippet, get back ranked code on GitHub that does the same thing. Five stages, each matching on something different (`docs/research/solution-schematics-v2.md`):
+
+1. **Tags** (#4, #7) — the GREP service pulls APIs, structures and domain words out of the snippet with regex. An LLM service names what the code *is*: algorithm, data structures, paradigm, calls. Grep is the baseline and works alone; the LLM is a complement.
+2. **Tag selection** (#22) — both tag sources merge into one tier-ordered list, and the user can drop tags or add their own before searching.
+3. **Code search** (#3, #19) — the tags become a `search/code` query, run server-side through an authenticated proxy. Cheap and imprecise on purpose: it just cuts GitHub down to a handful of candidates.
+4. **AST** (#20) — the same GREP service parses the candidates, isolates subtrees by construct category, tag anchors and completeness, and prunes by length. It also produces the AST of the pasted snippet.
+5. **Embeddings** (#18, #21) — UniXcoder embeds the snippet and the surviving candidates; cosine similarity ranks them. This is where "different text, same function" gets caught.
+
+Then results (#8, #23): one ranked, deduplicated list with repo, path, the matching snippet, scores and the query that found it.
+
+The diagram is `docs/diagrams/lab-1.architecture.html`, generated from the JSON beside it with the `archify` skill.
+
+### Non-obvious constraints
+
+- **GitHub code search matches 3-character trigrams**, strictly textual. It can't match on functional similarity — that's the entire reason the embedding stage exists.
+- **The search bar has a character limit**, so a pasted snippet can't be sent whole and has to be reduced to distinctive fragments. Highest-signal terms are unique function names, class definitions and rare identifiers. Double quotes force exact-phrase matching.
+- **Cosine similarity only**: `A·B / (‖A‖‖B‖)`, direction, magnitude ignored. Never sum vectors as a similarity score — that moves a point in the space instead of producing a scalar, and lets large-magnitude components distort the result.
+- **AST depth encodes scope and structural containment, not human meaning.** Again, that's why the embedding step exists.
+- **No vector store.** Candidates are embedded on demand and thrown away. Qdrant and anything like it are explicitly out of scope in #1.
 
 ## Frontend architecture
 
@@ -65,75 +95,37 @@ The directory names encode a layering that is worth respecting:
 
 There is no `README.md`: #2 renamed the stock Vite template readme to `FRONTEND.md` and replaced it with real frontend docs.
 
-### The search flow
+### The search flow, and why most of it is leaving
 
-`Search.tsx` drives everything: `buildQueryString` → client-side guards → `buildSearchQuery` → `searchRepoService.search` → `toSearchResult` → render. Chat state is a `Message` discriminated union (`user` | assistant `loading`/`error`/`done`), and a pending assistant message is swapped in place by id once the request settles — keep that shape when adding states.
+`Search.tsx` drives everything today: `buildQueryString` → client-side guards → `buildSearchQuery` → `searchRepoService.search` → `toSearchResult` → render. Chat state is a `Message` discriminated union (`user` | assistant `loading`/`error`/`done`), and a pending assistant message is swapped in place by id once the request settles — keep that shape when adding states.
 
-Non-obvious constraints already encoded in the code:
+**#19 moves the query building and the GitHub call to the backend.** The frontend keeps the chat state and the rendering, and stops knowing GitHub's URL. So treat everything below as a description of current code, not as a design to extend:
 
-- **It calls `search/repositories`, not `search/code`.** This diverges from the V0 design on `main`, which is about code search. Treat the current frontend as a scaffold over the wrong endpoint unless told otherwise.
+- **It calls `search/repositories`, not `search/code`.** The pipeline is about code search; this is the wrong endpoint.
 - **The user's pasted message is not in the query yet** — `buildQueryString(_message, filters)` ignores its first argument (explicit `TODO`). Searches are driven purely by the owner/repoName/languages filters.
 - **Repeated qualifiers act as OR** (`language:Go language:Rust`). The literal word `OR` does not work on qualifiers — GitHub answers "Logical operators only apply to text, not to qualifiers".
 - Values containing whitespace must be quoted (`language:"Jupyter Notebook"`); `URLSearchParams` handles the rest of the encoding so `C#`/`C++` don't break the URL.
-- `MAX_QUERY_LENGTH` (256) is checked against the `**q` value alone**, before the URL is assembled.
+- `MAX_QUERY_LENGTH` (256) is checked against the **`q` value alone**, before the URL is assembled.
 - Only `owner` is validated (`OWNER_PATTERN`), because it goes out as a `user:` qualifier and a bad value yields 422; `repoName` travels as free text with `in:name` and can't break the query.
-- Requests are **unauthenticated** — no token is attached, so expect the low anonymous rate limit. `toSearchErrorMessage` maps GitHub's raw English error text to user-facing copy by substring matching (`"cannot be searched"`, `"longer than 256"`, `"rate limit"`); that coupling is brittle and is the place to look when an error renders as a raw API string.
-
-`src/mocks/mockAnswers.ts` is lorem-ipsum placeholder text, not fixtures.
-
-## Project: LAB #1 (design intent, `main`)
-
-A GitHub-backed search engine that, given a pasted snippet, finds where equivalent code already exists. Three stages (`discussion.txt`):
-
-- **V0** — syntax-similarity search using GitHub's own code search, to cheaply reduce the search space.
-- **V1** — embedded vector search as a second, fine-tuned filter over V0's reduced space, maximizing functional/conceptual comparison.
-- **V2** — interactive web / plugin / MCP tool letting users vectorize their own code to feed V1.
-
-The staging is the core architectural decision: V0 is a **recall** stage whose only job is to cut the corpus down (the notes cite &gt;99.99% reduction from language/stars filtering), and V1 is a **precision** stage that only ever runs on V0's survivors. Cost is what couples them — see open question (a).
-
-### Why V0 alone is insufficient
-
-GitHub code search matches on **3-character trigrams**, strictly textual — it cannot match on functional similarity or semantic concept. So:
-
-- The search bar has a character limit; a pasted snippet cannot be sent whole and must be reduced to distinctive fragments.
-- Highest-signal query terms are unique function names, class definitions, and rare variable names.
-- Double quotes (`"function computeMatrix(a, b)"`) force exact-phrase matching.
-
-### The V2 pipeline
-
-Parse → embed → compare, as diagrammed in `discussion.txt` and detailed in `Vector-Embeding.pdf`:
-
-1. **Parse** — incremental Tree-sitter parsing, O(N) in code length, to an AST; incremental re-parse of an edited region is O(M).
-2. **Chunk** — split along AST scope boundaries (whole functions, class signatures) rather than by character or token count; strip syntactic noise (formatting, local names, comments) while keeping execution logic, control flow, and API/library invocations; enrich each chunk with parent AST metadata (`Class: AuthMiddleware -> Function: ValidateToken`) so a sliced sub-component keeps its context.
-3. **Embed** — code-native model (UniXcoder / CodeBERT / `text-embedding-3-small`) to a dense vector (~768–1536 dims), indexed in a vector store (Qdrant is the one named).
-4. **Rank** — cosine similarity `A · B / (||A|| ||B||)`, direction only, magnitude ignored; rerank and present equivalent code. Do not sum vectors as a similarity score — that moves a point in the space instead of producing a scalar and lets large-magnitude components distort the result.
-
-AST depth encodes **scope and structural containment, not human meaning** — that is precisely why the embedding step exists.
-
-### Open questions (from `discussion.txt`, unresolved)
-
-a) Pick a critical number of V0 pulls, bounded by embedding cost plus the downstream vector-comparison cost (complexity bounds are in the pushed PDFs).
-b) Decide the app/runtime the embedding runs on.
-c) AST generation already ranks function importance, flags API calls, and drops insignificant tokens — so **V2's first stage and V0 may be the same process**. Worth resolving before building them separately.
+- Requests are **unauthenticated** — no token is attached, so expect the low anonymous rate limit. `toSearchErrorMessage` maps GitHub's raw English error text to user-facing copy by substring matching (`"cannot be searched"`, `"longer than 256"`, `"rate limit"`); that coupling is brittle and #9 replaces it with error codes from the backend.
 
 ## Querying GitHub code search
 
-The reference invocation and the exact response shape for the **code** endpoint (the one V0 needs, and which the frontend does not yet use) are in `tests.md` on `main`:
+The reference invocation and the exact response shape for the **code** endpoint are in `docs/research/tests.md`:
 
 ```
 gh api -X GET search/code -f q='"_analyze_document_payload_sync" language:python'
 ```
 
-Requires an authenticated `gh` CLI. Two things visible only in that sample output: results include **private** repos the authenticated user can see (`repository.private: true`), and the same blob `sha` recurs across repos — dedupe on `sha` when ranking, and decide deliberately whether private hits should surface.
+Requires an authenticated `gh` CLI. Two things visible only in that sample output: results include **private** repos the authenticated user can see (`repository.private: true`), and the same blob `sha` recurs across repos — dedupe on `sha` when ranking, and private hits are excluded (#8).
 
-## Reference PDFs (`main`)
+`search/code` returns repo, path and sha, **not the file's contents**. The AST stage needs the actual code, so #3 also fetches files.
 
-Committed sources, not generated output — cite them rather than re-deriving:
+## Reference PDFs (`docs/research/`)
 
 - `Vector-Embeding.pdf` — the full end-to-end embedding architecture (12 pp).
 - `Resumen-Vector-Embeding.pdf` — cosine-similarity math and the pipeline map.
 - `Resumen- Protocolo-AST.pdf` — AST definition, node structure, and the O(N)/O(M) complexity bounds.
-
 
 ## Agent skills
 
@@ -147,12 +139,8 @@ The five canonical roles, each label string equal to its name. See `docs/agents/
 
 ### Domain docs
 
-Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. Neither exists yet. See `docs/agents/domain.md`.
 
-### Reference
+## Unexplored: other code hosts
 
-ee gitee.com/explore/all 
-
-and Gitcode [gitcode.com](http://gitcode.com) 
-
-dont forget to translate the page
+Idea from the team, not investigated yet: [gitee.com/explore/all](https://gitee.com/explore/all) and [gitcode.com](https://gitcode.com) as additional corpora to search. Both are in Chinese — translate the page. Nothing in the pipeline targets them; GitHub is the only host with a ticket.
