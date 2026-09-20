@@ -11,5 +11,7 @@ if __name__ == "__main__":
 
   score = verify_code_semantics(original,candidates)
 
-  for label, s in zip(cand_labels, score):   # sin ordenar: así se ve la curva
+  scored = sorted(zip(score, cand_labels), key=lambda x: x[0], reverse=True)
+
+  for s, label in scored:
       print(f"{s:.4f}  {label.split('|')[0].strip()}")
