@@ -88,7 +88,40 @@ Se realizaron pruebas con distintos valores de `max_length` para medir el efecto
 
 ---
 
-## 3. Análisis de Rendimiento
+## 3. Exceso del Límite Máximo de Tokens
+
+Se probaron scripts que superan ampliamente el límite de 1023 tokens para observar el comportamiento del modelo ante entradas que exceden su capacidad de procesamiento.
+
+### Prueba realizada
+
+Se multiplicó el contenido de ambos scripts (`word_freq_A.py` y `word_freq_B.py`) por factores crecientes para generar scripts de hasta ~12 000 tokens, y se midió la similitud resultante.
+
+| Multiplicador | Tokens A (original) | Tokens B (original) | Similitud | Tiempo (s) | ¿Error? |
+|---|---|---|---|---|---|
+| 1× | 545 | 610 | 0.9003 | 0.47 | No |
+| 2× | 1 090 | 1 220 | 0.9189 | 0.44 | No |
+| 3× | 1 635 | 1 830 | 0.9189 | 0.44 | No |
+| 5× | 2 725 | 3 050 | 0.9189 | 0.46 | No |
+| 10× | 5 450 | 6 100 | 0.9189 | 0.45 | No |
+| 20× | 10 900 | 12 200 | 0.9189 | 0.46 | No |
+
+### Comportamiento observado
+
+1. **Sin errores**: El modelo no falla ni lanza excepciones independientemente del tamaño del input. Scripts de 12 000+ tokens se procesan sin problema.
+
+2. **Truncamiento silencioso**: El método `tokenize()` corta internamente a `max_length - 4` tokens (1019). Los tokens excedentes se descartan sin advertencia ni mensaje. El usuario no puede saber si su script fue recortado o no.
+
+3. **Similitud estable**: Una vez que el contenido excede el límite, la similitud se estabiliza en **0.9189** (valor ligeramente superior al caso de 545/610 tokens porque el truncamiento a 1019 tokens incluye imports, definiciones de funciones y algo más de lógica).
+
+4. **Tiempo constante**: La ejecución se mantiene en ~0.44–0.47 s sin importar si el script tiene 500 o 12 000 tokens. El modelo internamente siempre procesa secuencias de 1024 tokens con el mismo costo computacional (atención cuadrática fija).
+
+5. **Pérdida silenciosa de información**: Un script de 3000 tokens que se trunca a 1019 pierde el 66% de su contenido sin ninguna notificación. Esto puede generar resultados engañosos si el usuario no es consciente del límite.
+
+> **Conclusión:** El modelo acepta scripts de cualquier tamaño sin error, pero trunca silenciosamente a 1019 tokens. La similitud y el tiempo de ejecución son esencialmente constantes para scripts que exceden el límite. Se recomienda agregar una advertencia en `tester.py` cuando un script supere el límite para informar al usuario.
+
+---
+
+## 4. Análisis de Rendimiento
 
 ### Desglose de la carga del modelo
 
@@ -110,7 +143,7 @@ La mayor parte del tiempo y memoria se consume en:
 
 ---
 
-## 4. Interpretación de la Similitud
+## 5. Interpretación de la Similitud
 
 La puntuación de **0.9003** clasifica a ambos scripts como **altamente similares**. Esto es consistente con el análisis:
 
@@ -122,7 +155,7 @@ La puntuación de **0.9003** clasifica a ambos scripts como **altamente similare
 
 ---
 
-## 5. Uso y Sintaxis
+## 6. Uso y Sintaxis
 
 ```bash
 python tester.py <script1.py> <script2.py>
@@ -137,7 +170,7 @@ El script acepta dos rutas de archivos, los lee completamente (hasta 1023 tokens
 
 ---
 
-## 6. Dependencias
+## 7. Dependencias
 
 - `torch` 2.8.0
 - `transformers` 4.57.6
@@ -148,11 +181,12 @@ El script acepta dos rutas de archivos, los lee completamente (hasta 1023 tokens
 
 ---
 
-## 7. Recomendaciones
+## 8. Recomendaciones
 
 - **max_length=1023**: Se recomienda usar el límite máximo del modelo para maximizar la precisión de la similitud semántica. La pérdida de información al truncar a 512 tokens es significativa (~12 puntos de similitud).
+- **Cuidado con scripts >1023 tokens**: Los scripts más largos son truncados silenciosamente a 1019 tokens. La similitud y el tiempo son constantes, pero se pierde información sin advertencia. Considerar agregar una alerta cuando un script exceda el límite.
 - **Caché de modelo**: La primera ejecución descarga el modelo de HuggingFace (~1.1 s adicional). Las ejecuciones posteriores usan la caché local.
 - **GPU**: Si se dispone de GPU, el tiempo de inferencia se reduciría drásticamente (la atención sobre 1024 tokens es muy costosa en CPU).
 - **Batch processing**: Para comparar múltiples pares de scripts, se puede reutilizar la misma instancia del modelo sin recarga.
 - **Modelo cuantizado**: Para entornos de producción con memoria limitada, considerar `torch.quantization` para reducir el footprint de ~925 MB.
-- **Cuidado con scripts >1023 tokens**: Los scripts más largos serán truncados silenciosamente. Para scripts muy grandes, considerar resumir o extraer solo las funciones relevantes antes de comparar.
+- **Para scripts muy grandes**: Antes de comparar, resumir o extraer solo las funciones relevantes para evitar truncamiento silencioso de lógica importante.
