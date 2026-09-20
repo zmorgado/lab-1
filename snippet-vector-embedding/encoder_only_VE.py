@@ -22,8 +22,10 @@ def verify_code_semantics(query: str, code_snippets: list, model=None) -> list:
         model.eval()
 
     # 3. Tokenize query and code snippets in <encoder-only> mode
-    query_tokens = model.tokenize([query], max_length=512, mode="<encoder-only>", padding=True)
-    code_tokens = model.tokenize(code_snippets, max_length=512, mode="<encoder-only>", padding=True)
+    #    max_length=1023 is the maximum supported by the model (1024 token bias buffer)
+    MAX_TOKENS = 1023
+    query_tokens = model.tokenize([query], max_length=MAX_TOKENS, mode="<encoder-only>", padding=True)
+    code_tokens = model.tokenize(code_snippets, max_length=MAX_TOKENS, mode="<encoder-only>", padding=True)
 
     query_ids = torch.tensor(query_tokens).to(device)
     code_ids = torch.tensor(code_tokens).to(device)

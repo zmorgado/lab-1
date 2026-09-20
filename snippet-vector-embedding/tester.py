@@ -2,14 +2,14 @@
 tester.py — Semantic Similarity Comparator
 ------------------------------------------
 Compares two code snippets using UniXcoder in encoder-only mode
-with a 500-token limit. Prints the similarity score and a
-resource/time report.
+with a 1023-token limit (maximum supported by the model).
+Prints the similarity score and a resource/time report.
 
 Usage:
     python tester.py <script1.py> <script2.py>
 
 Example:
-    python tester.py original.py modified.py
+    python tester.py word_freq_A.py word_freq_B.py
 """
 
 import sys
@@ -27,15 +27,6 @@ def read_script(path: str) -> str:
     """Read a file and return its contents as a string."""
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
-
-
-def truncate_to_tokens(text: str, tokenizer, max_tokens: int = 500) -> str:
-    """Truncate text to max_tokens if it exceeds that limit."""
-    tokens = tokenizer.tokenize(text)
-    if len(tokens) > max_tokens:
-        token_ids = tokenizer.convert_tokens_to_ids(tokens[:max_tokens])
-        return tokenizer.decode(token_ids, clean_up_tokenization_spaces=False)
-    return text
 
 
 def measure_resources(func, *args, **kwargs):
@@ -84,21 +75,22 @@ def measure_resources(func, *args, **kwargs):
     return result, metrics
 
 
-def print_report(scores, script1: str, script2: str, metrics: dict):
+def print_report(scores, script1: str, script2: str, metrics: dict,
+                 orig_tokens1: int, orig_tokens2: int):
     """Print a formatted similarity score and resource report."""
     score = scores[0]
 
     # Determine verdict
     if score > 0.7:
-        verdict = "Highly similar"
+        verdict = "Altamente similar"
     elif score > 0.4:
-        verdict = "Moderately similar"
+        verdict = "Moderadamente similar"
     elif score > 0.1:
-        verdict = "Slightly similar"
+        verdict = "Ligeramente similar"
     elif score > -0.1:
-        verdict = "Nearly unrelated"
+        verdict = "Casi no relacionado"
     else:
-        verdict = "Completely unrelated"
+        verdict = "Completamente no relacionado"
 
     print("\n" + "=" * 60)
     print("  SEMANTIC SIMILARITY REPORT")
@@ -106,7 +98,7 @@ def print_report(scores, script1: str, script2: str, metrics: dict):
 
     print(f"\n  Script 1 : {os.path.basename(script1)}")
     print(f"  Script 2 : {os.path.basename(script2)}")
-    print(f"  Token limit: 500 tokens")
+    print(f"  Token limit: 1023 tokens (model maximum)")
     print(f"\n  Cosine Similarity : {score:.4f}")
     print(f"  Verdict           : {verdict}")
 
@@ -139,7 +131,7 @@ def print_report(scores, script1: str, script2: str, metrics: dict):
 def main():
     if len(sys.argv) != 3:
         print("Usage: python tester.py <script1.py> <script2.py>")
-        print("Example: python tester.py original.py modified.py")
+        print("Example: python tester.py word_freq_A.py word_freq_B.py")
         sys.exit(1)
 
     script1_path = sys.argv[1]
@@ -155,29 +147,24 @@ def main():
     script1 = read_script(script1_path)
     script2 = read_script(script2_path)
 
-    # Load model once (shared for tokenization and inference)
+    # Count tokens before inference (no truncation, model handles it)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = UniXcoder("microsoft/unixcoder-base").to(device)
     model.eval()
 
-    # Truncate to 500 tokens if needed
-    script1_truncated = truncate_to_tokens(script1, model.tokenizer, 500)
-    script2_truncated = truncate_to_tokens(script2, model.tokenizer, 500)
-
-    orig_tokens = len(model.tokenizer.tokenize(script1))
-    mod_tokens = len(model.tokenizer.tokenize(script2))
+    orig_tokens1 = len(model.tokenizer.tokenize(script1))
+    orig_tokens2 = len(model.tokenizer.tokenize(script2))
 
     # Measure similarity + resources
+    # verify_code_semantics handles truncation internally with max_length=1023
     def run_inference():
-        return verify_code_semantics(
-            script1_truncated, [script2_truncated], model=model
-        )
+        return verify_code_semantics(script1, [script2], model=model)
 
     scores, metrics = measure_resources(run_inference)
 
     # Print report
-    print_report(scores, script1_path, script2_path, metrics)
-    print(f"  Token counts — Original: {orig_tokens} | Modified: {mod_tokens}")
+    print_report(scores, script1_path, script2_path, metrics, orig_tokens1, orig_tokens2)
+    print(f"  Token counts — Original: {orig_tokens1} | Modified: {orig_tokens2}")
     print()
 
 

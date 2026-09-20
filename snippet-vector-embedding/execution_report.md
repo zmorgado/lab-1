@@ -5,50 +5,50 @@
 **Hardware:** Apple Silicon, 10 núcleos de CPU, 16 GB RAM  
 **GPU:** No disponible — ejecución en CPU  
 **Modelo:** `microsoft/unixcoder-base` (UniXcoder, modo encoder-only)  
-**Límite de tokens:** 500 por script  
+**Límite de tokens:** 1023 (máximo soportado por el modelo — buffer de atención 1024×1024)  
 **Caso paradigmático:** `word_freq_A.py` vs `word_freq_B.py`
 
 ---
 
 ## Resumen Ejecutivo
 
-`tester.py` compara dos scripts de código usando UniXcoder para calcular su similitud coseno, con un límite de 500 tokens por script. El modelo se carga una sola vez y se reutiliza tanto para la tokenización como para la inferencia.
+`tester.py` compara dos scripts de código usando UniXcoder para calcular su similitud coseno, utilizando el límite máximo de 1023 tokens del modelo. El modelo se carga una sola vez y se reutiliza tanto para la tokenización como para la inferencia.
 
-El caso paradigmático presenta dos implementaciones de conteo de frecuencia de palabras en Python (`word_freq_A.py` y `word_freq_B.py`), cada una con aproximadamente 500 tokens. Ambos scripts resuelven el mismo problema (frecuencia de palabras) con enfoques diferentes: el primero usa `Counter` y expresiones regulares, el segundo usa un bucle manual con diccionario y manipulación de cadenas.
+El caso paradigmático presenta dos implementaciones de conteo de frecuencia de palabras en Python (`word_freq_A.py` y `word_freq_B.py`), cada una con aproximadamente 500–600 tokens (545 y 610 respectivamente). Ambos scripts caben completamente dentro del límite de 1023 tokens, lo que permite al modelo considerar el contexto completo de cada archivo.
 
 | Indicador | Valor |
 |---|---|
-| **Similitud coseno** | **0.7940** |
+| **Similitud coseno** | **0.9003** |
 | **Veredicto** | **Altamente similar** |
-| **Tiempo de ejecución** | **0.2269 s** |
-| **Pico de memoria RAM** | **~870 MB** |
-| **Crecimiento de memoria** | **~402 MB** |
+| **Tiempo de ejecución** | **0.4768 s** |
+| **Pico de memoria RAM** | **~925 MB** |
+| **Crecimiento de memoria** | **~457 MB** |
 
 ---
 
 ## 1. Caso Paradigmático — `word_freq_A.py` vs `word_freq_B.py`
 
-**Script 1:** `word_freq_A.py` — Implementación con `argparse`, `re`, y `collections.Counter` (545 tokens originales, truncado a 500)  
-**Script 2:** `word_freq_B.py` — Implementación con `sys`, bucle manual, diccionario y ordenación por selección (610 tokens originales, truncado a 500)  
-**Conteo de tokens:** 545 / 610 (ambos truncados a 500)
+**Script 1:** `word_freq_A.py` — Implementación con `argparse`, `re`, y `collections.Counter` (545 tokens originales)  
+**Script 2:** `word_freq_B.py` — Implementación con `sys`, bucle manual, diccionario y ordenación por selección (610 tokens originales)  
+**Conteo de tokens:** 545 / 610 (ambos dentro del límite de 1023)
 
 ### Resultado
 
 | Métrica | Valor |
 |---|---|
-| **Similitud coseno** | **0.7940** |
+| **Similitud coseno** | **0.9003** |
 | **Veredicto** | **Altamente similar** |
 
-Ambos scripts son semánticamente equivalentes (cuentan frecuencia de palabras) pero difieren en estilo: `word_freq_A.py` es más idiomático (usa `Counter`, `argparse`), mientras que `word_freq_B.py` es más manual (bucle explícito, selección para ordenar). La similitud de 0.7940 refleja que la intención y estructura general son las mismas.
+Ambos scripts son semánticamente equivalentes (cuentan frecuencia de palabras) pero difieren en estilo: `word_freq_A.py` es más idiomático (usa `Counter`, `argparse`), mientras que `word_freq_B.py` es más manual (bucle explícito, selección para ordenar). La similitud de 0.9003 refleja que el modelo, al tener acceso al contexto completo, reconoce que ambas implementaciones resuelven el mismo problema.
 
 ### Tiempo de Ejecución
 
 | Métrica | Valor |
 |---|---|
-| Tiempo real (reloj) | 0.2269 s |
-| Tiempo CPU (usuario) | 0.4887 s |
-| Tiempo CPU (sistema) | 0.2215 s |
-| Tiempo CPU total | 0.7102 s |
+| Tiempo real (reloj) | 0.4768 s |
+| Tiempo CPU (usuario) | 1.2405 s |
+| Tiempo CPU (sistema) | 0.4679 s |
+| Tiempo CPU total | 1.7084 s |
 | Cores de CPU | 10 |
 | Utilización de CPU | 0.0 % |
 
@@ -56,11 +56,11 @@ Ambos scripts son semánticamente equivalentes (cuentan frecuencia de palabras) 
 
 | Métrica | Valor |
 |---|---|
-| RSS antes del modelo | 468.30 MB |
-| RSS después del modelo | 870.30 MB |
-| Crecimiento de memoria | 402.00 MB |
-| Pico de asignación (tracemalloc) | 66.2 KB |
-| Asignación actual (tracemalloc) | 44.1 KB |
+| RSS antes del modelo | 468.25 MB |
+| RSS después del modelo | 924.95 MB |
+| Crecimiento de memoria | 456.70 MB |
+| Pico de asignación (tracemalloc) | 199.0 KB |
+| Asignación actual (tracemalloc) | 137.1 KB |
 
 ### Sistema
 
@@ -68,54 +68,57 @@ Ambos scripts son semánticamente equivalentes (cuentan frecuencia de palabras) 
 |---|---|
 | Hilos activos | 7 |
 | Descriptores de archivo abiertos | 9 |
-| Fallos de página menores | 59 821 |
+| Fallos de página menores | 64 254 |
 
 ---
 
-## 2. Desglose de Fases
+## 2. Impacto del Límite de Tokens
 
-| Fase | Duración estimada | Descripción |
-|---|---|---|
-| Carga del modelo | ~0.15 s | UniXcoder-base desde caché local (~870 MB) |
-| Tokenización | ~0.01 s | Codificación de ambos scripts con RobertaTokenizer |
-| Truncación a 500 tokens | ~0.001 s | Corte de tokens excedentes |
-| Inferencia (forward pass) | ~0.06 s | Dos pases del transformer (query + code embeddings) |
-| Similitud coseno | ~0.005 s | Normalización L2 + multiplicación de matrices |
-| Reporte | ~0.001 s | Formateo e impresión de resultados |
+Se realizaron pruebas con distintos valores de `max_length` para medir el efecto de truncar el contexto:
+
+| max_length | Tokens A | Tokens B | Similitud | Tiempo (s) |
+|---|---|---|---|---|
+| 50 | 50 | 50 | 0.5122 | 0.054 |
+| 100 | 100 | 100 | 0.3191 | 0.055 |
+| 200 | 200 | 200 | 0.5743 | 0.091 |
+| 512 | 512 | 512 | 0.7819 | 0.207 |
+| **1023** | **545** | **610** | **0.9003** | **0.477** |
+
+> **Conclusión:** A mayor `max_length`, mayor contexto disponible para el modelo, y por tanto mayor precisión en la similitud semántica. La diferencia entre 512 y 1023 tokens es de **+11.8 puntos** de similitud (0.78 → 0.90), lo que demuestra que truncar a 512 tokens hace perder información valiosa en scripts de ~600 tokens.
 
 ---
 
 ## 3. Análisis de Rendimiento
 
-### Carga del modelo
+### Desglose de la carga del modelo
 
 La mayor parte del tiempo y memoria se consume en:
 
-1. **Carga de pesos del modelo** (~870 MB de RAM): El modelo UniXcoder-base se carga desde caché local y representa el costo dominante de memoria.
-2. **Tokenización** (< 0.01 s): El tokenizer de Roberta procesa ambos scripts (~500 tokens cada uno) en milisegundos.
-3. **Inferencia** (~0.06 s): El paso hacia adelante del transformer sobre secuencias de ~500 tokens es muy rápido.
+1. **Carga de pesos del modelo** (~925 MB de RAM): El modelo UniXcoder-base se carga desde caché local y representa el costo dominante de memoria. El incremento respecto a max_length=512 (~870 MB) se debe a que las secuencias más largas requieren matrices de atención más grandes.
+2. **Tokenización** (< 0.01 s): El tokenizer de Roberta procesa ambos scripts en milisegundos.
+3. **Inferencia** (~0.47 s): El paso hacia adelante del transformer sobre secuencias de ~600 tokens es más costoso que con 512 tokens debido al cómputo cuadrático de la atención.
 
 ### Observaciones clave
 
-- **Tiempo constante**: La ejecución se mantiene en ~0.23 s independientemente de la similitud entre scripts. El cuello de botella es la carga del modelo (~870 MB), no el cómputo de similitud.
+- **Tiempo constante con el contenido, escalable con max_length**: Independientemente de la similitud entre scripts, el tiempo de ejecución depende de `max_length`, no de los tokens reales. Scripts de 5000 tokens con `max_length=1023` tardan lo mismo que scripts de 500 tokens con `max_length=1023`.
 - **Bajo consumo de CPU (~0 % de utilización instantánea)**: La inferencia es lo suficientemente rápida para que psutil no registre utilización significativa en el intervalo de medición.
-- **CPU user > system**: La proporción 0.49s usuario / 0.22s sistema indica que la mayor parte del cómputo es de propósito general (operaciones matemáticas de PyTorch), con una porción menor en llamadas al sistema (gestión de memoria, E/S).
-- **Cero swaps**: La presión de memoria (~870 MB) se maneja completamente dentro de los 16 GB de RAM física sin necesidad de paginación a disco.
-- **Memoria de Python (tracemalloc) mínima**: Las asignaciones rastreadas por Python son solo ~44–66 KB, ya que los pesos del modelo se almacenan en tensores de PyTorch (gestionados por C++, no por el rastreador de Python).
+- **CPU user > system (1.24s / 0.47s)**: La proporción indica que la mayor parte del cómputo es de propósito general (operaciones matemáticas de PyTorch en el transformer), con una porción menor en llamadas al sistema. El aumento de user/system time respecto a max_length=512 refleja el costo del cómputo de atención sobre secuencias más largas.
+- **Cero swaps**: La presión de memoria (~925 MB) se maneja completamente dentro de los 16 GB de RAM física sin necesidad de paginación a disco.
+- **Memoria de Python (tracemalloc) mínima**: Las asignaciones rastreadas por Python son solo ~137–199 KB, ya que los pesos del modelo se almacenan en tensores de PyTorch (gestionados por C++, no por el rastreador de Python).
 - **7 hilos activos**: Corresponden al intérprete de Python + hilos internos de torch y el sistema.
-- **Truncación efectiva**: Ambos scripts (~545 y ~610 tokens originales) fueron recortados a 500 tokens, demostrando que el mecanismo de límite funciona correctamente para scripts de tamaño moderado.
-- **Alta similitud (0.7940)**: A pesar de que ambos scripts usan técnicas de programación distintas (declarativa vs. imperativa), UniXcoder reconoce que resuelven el mismo problema de conteo de frecuencia de palabras.
+- **Ambos scripts caben dentro de 1023 tokens**: 545 y 610 tokens están bien por debajo del límite máximo, lo que permite al modelo ver el contexto completo de cada archivo sin truncamiento.
 
 ---
 
 ## 4. Interpretación de la Similitud
 
-La puntuación de **0.7940** clasifica a ambos scripts como **altamente similares**. Esto es consistente con el análisis:
+La puntuación de **0.9003** clasifica a ambos scripts como **altamente similares**. Esto es consistente con el análisis:
 
 - Ambos scripts reciben un archivo de texto y producen un reporte de las 10 palabras más frecuentes.
 - Ambos filtran stopwords comunes y palabras de longitud < 2.
 - Ambos ordenan por frecuencia descendente y luego alfabéticamente para empates.
 - Las diferencias son de estilo (usar `Counter` vs. bucle manual, `argparse` vs. `sys.argv`), no de lógica.
+- Con max_length=512 la similitud era 0.7940; con max_length=1023 sube a 0.9003, confirmando que el contexto adicional (imports completos, definiciones de funciones, lógica de post-procesamiento) es clave para el modelo.
 
 ---
 
@@ -130,7 +133,7 @@ python tester.py <script1.py> <script2.py>
 python tester.py word_freq_A.py word_freq_B.py
 ```
 
-El script acepta dos rutas de archivos, los lee, trunca a 500 tokens si es necesario, calcula la similitud coseno entre ambos usando UniXcoder, y imprime un informe completo de similitud y recursos.
+El script acepta dos rutas de archivos, los lee completamente (hasta 1023 tokens), calcula la similitud coseno entre ambos usando UniXcoder en modo encoder-only, y muestra la puntuación, un veredicto de similitud y un informe detallado de recursos y tiempo.
 
 ---
 
@@ -140,15 +143,16 @@ El script acepta dos rutas de archivos, los lee, trunca a 500 tokens si es neces
 - `transformers` 4.57.6
 - `psutil` 7.2.2
 - `unixcoder.py` (UniXcoder model class)
-- `encoder_only_VE.py` (verify_code_semantics function)
+- `encoder_only_VE.py` (verify_code_semantics function, max_length=1023)
 - `python` 3.9
 
 ---
 
 ## 7. Recomendaciones
 
-- **Caché de modelo**: La primera ejecución descarga el modelo de HuggingFace (~1.1 s adicional). Las ejecuciones posteriores usan la caché local y toman ~0.23 s.
-- **GPU**: Si se dispone de GPU, el tiempo de inferencia se reduciría a milisegundos.
+- **max_length=1023**: Se recomienda usar el límite máximo del modelo para maximizar la precisión de la similitud semántica. La pérdida de información al truncar a 512 tokens es significativa (~12 puntos de similitud).
+- **Caché de modelo**: La primera ejecución descarga el modelo de HuggingFace (~1.1 s adicional). Las ejecuciones posteriores usan la caché local.
+- **GPU**: Si se dispone de GPU, el tiempo de inferencia se reduciría drásticamente (la atención sobre 1024 tokens es muy costosa en CPU).
 - **Batch processing**: Para comparar múltiples pares de scripts, se puede reutilizar la misma instancia del modelo sin recarga.
-- **Modelo cuantizado**: Para entornos de producción con memoria limitada, considerar `torch.quantization` para reducir el footprint de ~870 MB.
-- **Tokens precisos**: El truncamiento actual reconstruye el texto desde tokens recortados, lo cual puede perder coherencia sintáctica al cortar a mitad de una función. Para scripts más largos, considerar truncar a nivel de función o línea completa.
+- **Modelo cuantizado**: Para entornos de producción con memoria limitada, considerar `torch.quantization` para reducir el footprint de ~925 MB.
+- **Cuidado con scripts >1023 tokens**: Los scripts más largos serán truncados silenciosamente. Para scripts muy grandes, considerar resumir o extraer solo las funciones relevantes antes de comparar.
