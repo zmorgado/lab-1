@@ -45,25 +45,3 @@ def verify_code_semantics(query: str, code_snippets: list, model=None) -> list:
     # Convert to a flat list of float scores
     scores = similarity_matrix.squeeze(0).tolist()
     return scores if isinstance(scores, list) else [scores]
-
-
-if __name__ == "__main__":
-    # Query string representing conceptual intent
-    query = "sort dict by value"
-
-    # Candidate code snippets (raw code text)
-    candidate_snippets = [
-        "def sort_dictionary(d):\n    return dict(sorted(d.items(), key=lambda item: item[1]))",
-        "def compute_average(lst):\n    return sum(lst) / len(lst)"
-    ]
-
-    # Run semantic verification
-    scores = verify_code_semantics(query, candidate_snippets)
-
-    # Output results
-    print(f"Query: '{query}'\n" + "-" * 45)
-    for idx, (snippet, score) in enumerate(zip(candidate_snippets, scores), 1):
-        first_line = snippet.split('\n')[0]
-        print(f"Candidate {idx} [{first_line}]:\n  Similarity Score = {score:.4f}\n")
-
-#cosine similarity scores for short natural language queries against code snippets typically range around 0.45 – 0.60for positive matches, while completely unrelated code (like `compute_average`) stays down near 0.10 – 0.15.
