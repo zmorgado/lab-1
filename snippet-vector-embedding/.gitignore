@@ -1,0 +1,15 @@
+# Virtual Environments
+mi_entorno_venv/
+.venv/
+env/
+venv/
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# Downloaded Hugging Face / PyTorch cache (if local)
+.cache/
+
+# macOS
+.DS_Store

@@ -1,17 +1,25 @@
 import torch
 from unixcoder import UniXcoder
 
-def verify_code_semantics(query: str, code_snippets: list) -> list:
+
+def verify_code_semantics(query: str, code_snippets: list, model=None) -> list:
     """
     Computes cosine similarity scores between a natural language query
     and a list of code snippets using UniXcoder in <encoder-only> mode.
+
+    Parameters:
+        query       : The reference code snippet (string).
+        code_snippets: List of candidate code snippets to compare against.
+        model       : Optional pre-loaded UniXcoder instance. If None,
+                      a new model is loaded internally.
     """
     # 1. Select hardware device (GPU if available, else CPU)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # 2. Load pre-trained UniXcoder model and set to evaluation mode
-    model = UniXcoder("microsoft/unixcoder-base").to(device)
-    model.eval()
+    # 2. Load model if not provided
+    if model is None:
+        model = UniXcoder("microsoft/unixcoder-base").to(device)
+        model.eval()
 
     # 3. Tokenize query and code snippets in <encoder-only> mode
     query_tokens = model.tokenize([query], max_length=512, mode="<encoder-only>", padding=True)
