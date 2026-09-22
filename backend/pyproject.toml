@@ -3,20 +3,25 @@ name = "code-search-proxy"
 version = "0.1.0"
 description = "Authenticated GitHub code-search proxy for LAB #1."
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "torch>=2.8.0",
+    "transformers>=4.57.6",
+    "psutil>=6.0.0",
+]
 
 [dependency-groups]
 dev = ["pytest>=9.1.1"]
 
 # El backend existe como paquete instalable (no solo un directorio de scripts)
 # para que 'uv sync' lo instale editable: los tests importan code_search_proxy
-# igual que lo va a hacer uvicorn en produccion, sin depender del cwd.
+# y services (el servicio de embeddings) igual que lo va a hacer uvicorn
+# en produccion, sin depender del cwd.
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/code_search_proxy"]
+packages = ["src/code_search_proxy", "services"]
 
 [tool.pytest.ini_options]
 # 'tests' es la raiz de la suite; el paquete se importa instalado (src layout),

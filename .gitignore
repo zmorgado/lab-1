@@ -28,3 +28,11 @@ __pycache__/
 *.py[cod]
 .venv
 .pytest_cache/
+
+# Virtual environments (global)
+mi_entorno_venv/
+env/
+venv/
+
+# Hugging Face / PyTorch cache
+.cache/
