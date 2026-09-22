@@ -33,8 +33,8 @@ def github_client(request: Request) -> GitHubClient:
         # Pasa si se instancia TestClient sin el 'with': el lifespan no corrio y
         # el AttributeError pelado de Starlette no dice por que
         raise RuntimeError(
-            "El cliente de GitHub no esta inicializado: la app se uso sin su "
-            "lifespan. Con TestClient hay que usarlo como context manager "
+            "The GitHub client is not initialised: the app was used without its "
+            "lifespan. With TestClient, use it as a context manager "
             "('with TestClient(app) as client')."
         )
     return client
@@ -60,7 +60,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(
         title="LAB #1 code-search proxy",
-        description="Proxy autenticado de busqueda de codigo y fetch de archivos en GitHub.",
+        description="Authenticated proxy for GitHub code search and file fetching.",
         version="0.1.0",
         lifespan=lifespan,
     )
@@ -78,6 +78,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "X-RateLimit-Reset",
             "X-RateLimit-Used",
             "X-RateLimit-Resource",
+            "Retry-After",
         ],
     )
 
@@ -97,12 +98,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/search/code")
     async def search_code(
         github: GitHubDep,
-        q: Annotated[str, Query(min_length=1, description="Query de busqueda de GitHub")],
+        q: Annotated[str, Query(min_length=1, description="GitHub search query")],
         per_page: Annotated[int | None, Query(ge=1, le=100)] = None,
         page: Annotated[int | None, Query(ge=1)] = None,
     ) -> Response:
         if not q.strip():
-            return _invalid("q no puede estar vacio")
+            return _invalid("q cannot be empty")
 
         result = await github.search_code(q=q, per_page=per_page, page=page)
         return JSONResponse(
@@ -112,20 +113,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/contents", response_class=PlainTextResponse)
     async def get_file_contents(
         github: GitHubDep,
-        repo: Annotated[str, Query(description="'owner/name', como en repository.full_name")],
-        path: Annotated[str, Query(description="Ruta del archivo dentro del repo")],
-        ref: Annotated[str, Query(description="Rama, tag o sha del commit")],
+        repo: Annotated[str, Query(description="'owner/name', as in repository.full_name")],
+        path: Annotated[str, Query(description="Path of the file inside the repository")],
+        ref: Annotated[str, Query(description="Branch, tag or commit sha")],
     ) -> Response:
         # El path viaja como query param, no en la ruta, asi que las barras de un
         # path anidado no pelean con el ruteo
         if not REPO_PATTERN.match(repo):
-            return _invalid("repo tiene que tener el formato 'owner/name'")
+            return _invalid("repo must have the form 'owner/name'")
 
         if not path.strip() or ".." in path.split("/"):
-            return _invalid("path no es una ruta valida dentro del repo")
+            return _invalid("path is not a valid path inside the repository")
 
         if not ref.strip():
-            return _invalid("ref no puede estar vacio")
+            return _invalid("ref cannot be empty")
 
         result = await github.get_file_contents(repo=repo, path=path.lstrip("/"), ref=ref)
         return PlainTextResponse(
@@ -156,6 +157,7 @@ def _rate_limit_headers(rate_limit: RateLimit | None) -> dict[str, str]:
         "X-RateLimit-Reset": rate_limit.reset,
         "X-RateLimit-Used": rate_limit.used,
         "X-RateLimit-Resource": rate_limit.resource,
+        "Retry-After": rate_limit.retry_after,
     }
 
     return {name: str(value) for name, value in values.items() if value is not None}

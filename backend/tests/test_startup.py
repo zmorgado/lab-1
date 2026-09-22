@@ -69,4 +69,4 @@ def test_a_local_env_file_does_not_mask_the_missing_credential(tmp_path) -> None
 
     # Pedir explicitamente 'sin archivo' tiene que fallar aunque exista uno
     with pytest.raises(MissingCredentialError):
-        load_settings({}, env_file=tmp_path / "no-existe.env")
+        load_settings({}, env_file=tmp_path / "nonexistent.env")

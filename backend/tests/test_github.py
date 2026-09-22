@@ -202,3 +202,43 @@ async def test_a_network_failure_becomes_a_gateway_error(client: GitHubClient) -
         await client.search_code(q='"foo"')
 
     assert excinfo.value.status_code == 502
+
+
+@respx.mock
+async def test_get_file_contents_rejects_a_binary_file_that_decodes_as_utf8(
+    client: GitHubClient,
+) -> None:
+    # Un binario de bytes bajos decodifica como UTF-8 valido: sin un chequeo
+    # aparte se le entregaria a la etapa de AST como si fuera codigo
+    blob = bytes([0x00, 0x01, 0x02, 0x41, 0x42, 0x43, 0x00, 0x7F])
+    respx.get("https://api.github.com/repos/octocat/Hello-World/contents/data.bin").mock(
+        return_value=httpx.Response(
+            200,
+            json={"content": base64.b64encode(blob).decode(), "encoding": "base64"},
+        )
+    )
+
+    with pytest.raises(GitHubError) as excinfo:
+        await client.get_file_contents(
+            repo="octocat/Hello-World", path="data.bin", ref="master"
+        )
+
+    assert excinfo.value.status_code == 415
+
+
+@respx.mock
+async def test_malformed_base64_is_reported_as_such(client: GitHubClient) -> None:
+    # Base64 roto es corrupcion de arriba, no "el archivo es binario": el
+    # mensaje tiene que distinguirlos
+    respx.get("https://api.github.com/repos/octocat/Hello-World/contents/broken.py").mock(
+        return_value=httpx.Response(
+            200, json={"content": "!!!not base64!!!", "encoding": "base64"}
+        )
+    )
+
+    with pytest.raises(GitHubError) as excinfo:
+        await client.get_file_contents(
+            repo="octocat/Hello-World", path="broken.py", ref="master"
+        )
+
+    assert "base64" in excinfo.value.body["message"]

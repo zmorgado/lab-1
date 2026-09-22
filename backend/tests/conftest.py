@@ -2,15 +2,14 @@
 
 Asegura que 'src/' este en sys.path antes de importar el paquete.
 
-El paquete se instala editable (src layout) y 'pyproject.toml' usa
-'dev-mode-dirs' para que el .pth sea la ruta pelada, pero eso no alcanza por si
-solo: 'uv run' revisa el proyecto y puede reinstalarlo al arrancar, o sea
-despues de que Python ya proceso site-packages. En esa corrida el .pth nuevo no
-se lee y el import de code_search_proxy falla aunque el archivo en disco este
-bien.
+El paquete se instala editable (src layout), pero eso no alcanza: algunos builds
+de python.org (3.12.8 aca) saltean los .pth cuyo nombre arranca con '_'
+("Skipping hidden .pth file"), y el editable se instala justamente como
+'_editable_impl_code_search_proxy.pth' con la ruta a src/ adentro. Queda
+ignorado y el import de code_search_proxy falla aunque el archivo este bien.
 
-Esta linea corta esa carrera: la suite no depende de cuando se reescribio el
-.pth.
+Asegurar la ruta aca hace que la suite no dependa de ese detalle del
+interprete. Ver BACKEND.md.
 """
 
 import sys
@@ -61,5 +60,5 @@ def isolate_from_the_local_env_file(monkeypatch, tmp_path):
     que el resultado no dependa de si el que corre la suite tiene .env o no.
     """
     monkeypatch.setattr(
-        "code_search_proxy.config.DEFAULT_ENV_FILE", tmp_path / "no-existe.env"
+        "code_search_proxy.config.DEFAULT_ENV_FILE", tmp_path / "nonexistent.env"
     )

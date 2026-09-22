@@ -29,6 +29,19 @@ uv run pytest           # run the test suite — exits non-zero on failure
 `HOST` and `PORT` override the bind address. For auto-reload while developing,
 use uvicorn directly: `uv run uvicorn code_search_proxy.main:app --reload`.
 
+**If either command dies with `ModuleNotFoundError: No module named
+'code_search_proxy'`, prefix it with `PYTHONPATH=src`.** Some python.org builds
+(3.12.8 here) skip `.pth` files whose name begins with `_`, and the editable
+install is exactly `_editable_impl_code_search_proxy.pth` with `src/` inside it,
+so the package never reaches `sys.path`. It is an interpreter quirk, not a
+project misconfiguration, and `uv sync` regenerates the same file each time:
+
+```
+PYTHONPATH=src uv run uvicorn code_search_proxy.main:app --port 8000
+```
+
+`uv run pytest` is unaffected — `tests/conftest.py` sets the path itself.
+
 ## The credential
 
 The service **will not start without a GitHub token**: `search/code` rejects
@@ -98,10 +111,9 @@ FastAPI's own docs are written against, so `TestClient` works as documented.
 **the suite never makes a network call and needs no token**.
 
 The package uses a **src layout** (`src/code_search_proxy/`) and `uv sync`
-installs it editable. `tests/conftest.py` still puts `src/` on `sys.path`: `uv
-run` can reinstall the package while starting up, i.e. after Python has already
-processed `site-packages`, and in that run the regenerated `.pth` is never read.
-Without it the suite fails to import `code_search_proxy` intermittently. It also
+installs it editable. `tests/conftest.py` still puts `src/` on `sys.path`, for the
+`.pth` reason above — without it the suite cannot import `code_search_proxy` at
+all on an affected interpreter. It also
 holds the shared fixtures and points `DEFAULT_ENV_FILE` at a throwaway path, so
 the suite's result does not depend on whether you happen to have a `.env`. Tests
 live in `backend/tests/`, mirroring the module they cover, not colocated (that

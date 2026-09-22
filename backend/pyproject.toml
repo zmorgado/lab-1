@@ -34,19 +34,12 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-# El editable por defecto usa un .pth que importa un modulo generado, y
-# hatchling lo escribe sin salto de linea final; como Python lee los .pth en
-# orden alfabetico, ese contenido se pega con el del .pth siguiente y 'src/'
-# nunca entra en sys.path. 'dev-mode-dirs' hace que el .pth sea la ruta pelada.
-[tool.hatch.build]
-dev-mode-dirs = ["src"]
-
 [tool.hatch.build.targets.wheel]
 packages = ["src/code_search_proxy", "services"]
 
 [tool.pytest.ini_options]
-# 'tests' es la raiz de la suite; el paquete se importa instalado (src layout),
-# no desde el directorio de trabajo, asi que no hace falta tocar sys.path.
+# 'tests' es la raiz de la suite. El paquete se instala editable (src layout),
+# pero conftest.py igual asegura 'src/' en sys.path: ver el comentario de ahi.
 testpaths = ["tests"]
 # Los tests del cliente HTTP y de los endpoints son async: 'auto' evita tener que
 # marcar cada uno con @pytest.mark.asyncio

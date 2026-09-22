@@ -243,3 +243,21 @@ def test_using_the_app_without_its_lifespan_says_so() -> None:
 
     with pytest.raises(RuntimeError, match="lifespan"):
         bare.get("/api/search/code", params={"q": '"foo"'})
+
+
+@respx.mock
+def test_retry_after_is_forwarded_on_a_secondary_rate_limit(client: TestClient) -> None:
+    # GitHub manda Retry-After cuando frena por abuso/limite secundario: es la
+    # unica pista de cuanto esperar, y el presupuesto de code_search es de 10/min
+    respx.get("https://api.github.com/search/code").mock(
+        return_value=httpx.Response(
+            403,
+            json={"message": "You have exceeded a secondary rate limit"},
+            headers=RATE_LIMIT_HEADERS | {"Retry-After": "60"},
+        )
+    )
+
+    response = client.get("/api/search/code", params={"q": '"foo"'})
+
+    assert response.status_code == 403
+    assert response.headers["retry-after"] == "60"

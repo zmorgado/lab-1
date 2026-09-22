@@ -28,6 +28,9 @@ LARGE_FILE_STATUS = 413
 UNUSABLE_CONTENT_STATUS = 415
 UPSTREAM_UNREACHABLE_STATUS = 502
 
+# No aparece en texto y si en cualquier binario
+NUL_BYTE = b"\x00"
+
 T = TypeVar("T")
 
 
@@ -45,6 +48,9 @@ class RateLimit:
     reset: int | None = None
     used: int | None = None
     resource: str | None = None
+    # Solo viene en el limite secundario (403/429), y es la unica pista de
+    # cuanto hay que esperar
+    retry_after: int | None = None
 
     @classmethod
     def from_headers(cls, headers: httpx.Headers) -> "RateLimit | None":
@@ -62,6 +68,13 @@ class RateLimit:
 
         resource = headers.get("x-ratelimit-resource")
         values = {name: number(name) for name in ("limit", "remaining", "reset", "used")}
+
+        retry_after = headers.get("retry-after")
+        try:
+            values["retry_after"] = None if retry_after is None else int(retry_after)
+        except ValueError:
+            # Retry-After tambien admite una fecha HTTP; no la traducimos
+            values["retry_after"] = None
 
         if resource is None and all(value is None for value in values.values()):
             return None
@@ -93,14 +106,13 @@ class GitHubError(Exception):
         self.status_code = status_code
         self.body = body
         self.rate_limit = rate_limit
-        super().__init__(f"GitHub respondio {status_code}: {body!r}")
+        super().__init__(f"GitHub responded {status_code}: {body!r}")
 
 
 class GitHubClient:
     """Cliente async sobre httpx. Se usa como context manager."""
 
     def __init__(self, settings: Settings, client: httpx.AsyncClient | None = None) -> None:
-        self._settings = settings
         self._client = client or httpx.AsyncClient(
             base_url=settings.github_api_url,
             timeout=REQUEST_TIMEOUT_SECONDS,
@@ -154,7 +166,7 @@ class GitHubClient:
             # Un directorio devuelve una lista; no hay archivo que parsear
             raise GitHubError(
                 UNUSABLE_CONTENT_STATUS,
-                {"message": f"'{path}' es un directorio, no un archivo"},
+                {"message": f"'{path}' is a directory, not a file"},
                 rate_limit,
             )
 
@@ -164,8 +176,8 @@ class GitHubClient:
                 LARGE_FILE_STATUS,
                 {
                     "message": (
-                        f"'{path}' no viene inline en la API de contents "
-                        f"(encoding: {payload.get('encoding')!r}); es demasiado grande"
+                        f"'{path}' is not returned inline by the contents API "
+                        f"(encoding: {payload.get('encoding')!r}); it is too large"
                     )
                 },
                 rate_limit,
@@ -174,12 +186,31 @@ class GitHubClient:
         try:
             # GitHub parte el base64 con saltos de linea cada 60 chars
             raw = base64.b64decode(payload.get("content", ""), validate=False)
-            text = raw.decode("utf-8")
-        except (binascii.Error, ValueError) as error:
-            # Un binario no le sirve a la etapa de AST
+        except binascii.Error as error:
+            # Base64 roto es corrupcion de arriba, no un archivo binario
             raise GitHubError(
                 UNUSABLE_CONTENT_STATUS,
-                {"message": f"'{path}' no es texto UTF-8 decodificable"},
+                {"message": f"'{path}' did not arrive as valid base64"},
+                rate_limit,
+            ) from error
+
+        # Un binario de bytes bajos decodifica como UTF-8 valido, asi que decodificar
+        # no alcanza para detectarlo. El byte NUL es la heuristica habitual (la misma
+        # que usa git): no aparece en texto, si en cualquier binario.
+        if NUL_BYTE in raw:
+            raise GitHubError(
+                UNUSABLE_CONTENT_STATUS,
+                {"message": f"'{path}' looks like a binary file, not source"},
+                rate_limit,
+            )
+
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as error:
+            # No es UTF-8: la etapa de AST no lo puede parsear
+            raise GitHubError(
+                UNUSABLE_CONTENT_STATUS,
+                {"message": f"'{path}' is not decodable UTF-8 text"},
                 rate_limit,
             ) from error
 
@@ -192,7 +223,7 @@ class GitHubClient:
             # Timeout, DNS, conexion cortada: para el cliente es un 502, no un 500
             raise GitHubError(
                 UPSTREAM_UNREACHABLE_STATUS,
-                {"message": f"No se pudo alcanzar la API de GitHub: {error}"},
+                {"message": f"Could not reach the GitHub API: {error}"},
             ) from error
 
         if response.is_error:
