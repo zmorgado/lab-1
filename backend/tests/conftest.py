@@ -51,14 +51,17 @@ RATE_LIMIT_HEADERS = {
 
 
 @pytest.fixture(autouse=True)
-def isolate_from_the_local_env_file(monkeypatch, tmp_path):
-    """Aisla la suite de backend/.env.
+def isolate_from_local_credentials(monkeypatch, tmp_path):
+    """Aisla la suite de las credenciales de la maquina.
 
-    load_settings cae a DEFAULT_ENV_FILE cuando no le pasan uno. Con el .env que
-    documenta BACKEND.md, los tests de 'falta la credencial' tomaban el token de
-    ahi y pasaban en verde sin probar nada. Apuntarlo a una ruta inexistente hace
-    que el resultado no dependa de si el que corre la suite tiene .env o no.
+    load_settings busca el token en backend/.env y despues en el 'gh' CLI. Las
+    dos cosas existen en la maquina de quien desarrolla, asi que sin aislar, los
+    tests de 'falta la credencial' agarran una de verdad y pasan en verde sin
+    probar nada. El resultado no puede depender del setup local.
+
+    Un test que quiera el fallback de 'gh' pisa read_gh_cli_token el mismo.
     """
     monkeypatch.setattr(
         "code_search_proxy.config.DEFAULT_ENV_FILE", tmp_path / "nonexistent.env"
     )
+    monkeypatch.setattr("code_search_proxy.config.read_gh_cli_token", lambda: None)

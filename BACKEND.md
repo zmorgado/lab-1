@@ -49,18 +49,25 @@ anonymous requests. The token is read server-side only and never reaches the
 client bundle. Startup fails with an actionable message, not a traceback, when it
 is missing.
 
-Supply it either way — the real environment wins over the file:
+It is resolved in this order, so anything explicit beats anything ambient:
 
-```
-export GITHUB_TOKEN=$(gh auth token)        # one-off
+1. **`GITHUB_TOKEN` in the environment** — `export GITHUB_TOKEN=$(gh auth token)`
+2. **`backend/.env`** — `cp .env.example .env`, then fill it in
+3. **The `gh` CLI** — nothing to configure if `gh auth status` is already green
 
-cp .env.example .env                         # or persist it locally
-echo "GITHUB_TOKEN=$(gh auth token)" >> .env
-```
+Step 3 means a machine with an authenticated `gh` needs **no setup at all**: the
+service shells out to `gh auth token` (~75ms, once at startup) and uses that. It
+is a local-development convenience only — `gh` is not a dependency, and if it is
+missing, logged out, or slow, the fallback yields nothing and startup fails with
+the usual message. **Deployments set `GITHUB_TOKEN`**; there is no `gh` there.
 
-`backend/.env` is gitignored; `.env.example` is the committed template. The token
-needs the `public_repo` scope. `GITHUB_API_URL` optionally points the proxy at
-another instance (GitHub Enterprise, or a fake in tests).
+One caveat: a `gh` token carries whatever scopes you granted the CLI, typically
+`repo`, which is broader than the `public_repo` this needs and can read private
+repositories. Fine locally, but not what you would deploy with.
+
+`backend/.env` is gitignored; `.env.example` is the committed template.
+`GITHUB_API_URL` optionally points the proxy at another instance (GitHub
+Enterprise, or a fake in tests).
 
 ## Endpoints
 
