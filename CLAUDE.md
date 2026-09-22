@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **root** — the React + TypeScript + Vite frontend (`src/`, `package.json`, pnpm).
 - **`backend/`** — the Python service (`pyproject.toml`, uv). It will hold the whole pipeline: proxy, tag extraction, AST stage and embeddings. Scaffolding only so far: no endpoints yet.
-- **`docs/research/`** — the design sources: `solution-schematics-v2.md`, `multiple-snippet-sorting-solution.md`, the reference PDFs, `discussion.txt`, `tests.md` and the `generacion-de-tags-query.py` sketch. Committed sources, not generated output — cite them rather than re-deriving.
+- **`docs/research/`** — the design sources: `solution-schematics-v2.md`, `multiple-snippet-sorting-solution.md`, `unixcoder-verificacion.md`, the reference PDFs, `discussion.txt`, `tests.md` and the `generacion-de-tags-query.py` sketch. Committed sources, not generated output — cite them rather than re-deriving.
 - **`docs/diagrams/`** — the architecture diagram (`lab-1.architecture.html`, generated from `lab-1.architecture.json`).
 - **`docs/agents/`** — how agent skills should use this repo's tracker, labels and domain docs.
 
