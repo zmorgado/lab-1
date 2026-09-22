@@ -242,3 +242,20 @@ async def test_malformed_base64_is_reported_as_such(client: GitHubClient) -> Non
         )
 
     assert "base64" in excinfo.value.body["message"]
+
+
+def test_the_fixtures_name_no_real_repositories() -> None:
+    """Las fixtures no pueden nombrar repos reales, menos todavia privados.
+
+    La suite corre entera contra respx, asi que estos nombres nunca se piden de
+    verdad: el problema no es que falle, es que un repo privado commiteado en
+    una fixture filtra su existencia y su estructura de paths a cualquiera que
+    clone el repo. Por eso las fixtures usan nombres inventados bajo un prefijo
+    unico, y este test evita que vuelva a colarse uno real.
+    """
+    names = {
+        item["repository"]["full_name"] for item in SEARCH_BODY["items"]
+    }
+
+    assert names, "SEARCH_BODY quedo sin items"
+    assert all(name.startswith("example-org/") for name in names), names

@@ -100,13 +100,18 @@ export GITHUB_TOKEN=$(gh auth token)
 uv run code-search-proxy &
 
 curl -sD - -G localhost:8000/api/search/code \
-  --data-urlencode 'q="_analyze_document_payload_sync" language:python'
+  --data-urlencode 'q="def get_adapter" repo:psf/requests language:python'
 
 curl -s -G localhost:8000/api/contents \
-  --data-urlencode 'repo=zmorgado/wapp-bot' \
-  --data-urlencode 'path=app/services/document_ai.py' \
-  --data-urlencode 'ref=HEAD'
+  --data-urlencode 'repo=octocat/Hello-World' \
+  --data-urlencode 'path=README' \
+  --data-urlencode 'ref=master'
 ```
+
+Both targets are long-lived public repositories, so this check works for anyone
+with a token, whatever their access. Note that a search run against **your** own
+token also returns private repositories you can see (`docs/research/tests.md`
+shows one), which is why #8 dedupes on `sha` and drops private hits.
 
 ## Tests
 

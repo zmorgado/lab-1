@@ -26,17 +26,29 @@ from code_search_proxy.config import Settings  # noqa: E402
 
 SETTINGS = Settings(github_token="ghp_fake", github_api_url="https://api.github.com")
 
-# Recortado de docs/research/tests.md: la forma real, sin los campos que no se tocan
+# La forma real que devuelve search/code (docs/research/tests.md), sin los campos
+# que el proxy no toca. Los nombres son inventados a proposito: nada de repos
+# reales, menos todavia privados, en una fixture que se commitea.
+#
+# Los dos items comparten el mismo 'sha': es el caso real del research (el mismo
+# blob aparece en varios repos) y lo que #8 tiene que deduplicar. El segundo es
+# privado, que es lo que #8 tiene que excluir.
 SEARCH_BODY = {
-    "total_count": 1,
+    "total_count": 2,
     "incomplete_results": False,
     "items": [
         {
             "name": "document_ai.py",
             "path": "app/services/document_ai.py",
             "sha": "c94096de9cefc0fa90434a3b65d043540e5b120e",
-            "repository": {"full_name": "WeAreNubi/family-bot", "private": True},
-        }
+            "repository": {"full_name": "example-org/public-sample", "private": False},
+        },
+        {
+            "name": "document_ai.py",
+            "path": "app/services/document_ai.py",
+            "sha": "c94096de9cefc0fa90434a3b65d043540e5b120e",
+            "repository": {"full_name": "example-org/private-sample", "private": True},
+        },
     ],
 }
 
