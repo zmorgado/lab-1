@@ -7,10 +7,24 @@ dependencies = [
     "torch>=2.8.0",
     "transformers>=4.57.6",
     "psutil>=6.0.0",
+
+    "fastapi>=0.141.1",
+    "httpx>=0.28.1",
+    "python-dotenv>=1.2.3",
+    "uvicorn[standard]>=0.53.0",
 ]
 
+# 'uv run code-search-proxy' levanta el servicio sin tener que recordar el
+# modulo de uvicorn
+[project.scripts]
+code-search-proxy = "code_search_proxy.main:main"
+
 [dependency-groups]
-dev = ["pytest>=9.1.1"]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "respx>=0.23.1",
+]
 
 # El backend existe como paquete instalable (no solo un directorio de scripts)
 # para que 'uv sync' lo instale editable: los tests importan code_search_proxy
@@ -20,6 +34,13 @@ dev = ["pytest>=9.1.1"]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# El editable por defecto usa un .pth que importa un modulo generado, y
+# hatchling lo escribe sin salto de linea final; como Python lee los .pth en
+# orden alfabetico, ese contenido se pega con el del .pth siguiente y 'src/'
+# nunca entra en sys.path. 'dev-mode-dirs' hace que el .pth sea la ruta pelada.
+[tool.hatch.build]
+dev-mode-dirs = ["src"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/code_search_proxy", "services"]
 
@@ -27,3 +48,6 @@ packages = ["src/code_search_proxy", "services"]
 # 'tests' es la raiz de la suite; el paquete se importa instalado (src layout),
 # no desde el directorio de trabajo, asi que no hace falta tocar sys.path.
 testpaths = ["tests"]
+# Los tests del cliente HTTP y de los endpoints son async: 'auto' evita tener que
+# marcar cada uno con @pytest.mark.asyncio
+asyncio_mode = "auto"
