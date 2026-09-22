@@ -1,5 +1,5 @@
 import torch
-from unixcoder import UniXcoder
+from services.unixcoder import UniXcoder
 
 
 def verify_code_semantics(query: str, code_snippets: list, model=None) -> list:

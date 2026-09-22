@@ -6,10 +6,10 @@ with a 1023-token limit (maximum supported by the model).
 Prints the similarity score and a resource/time report.
 
 Usage:
-    python tester.py <script1.py> <script2.py>
+    python tests/tester.py tests/word_freq_A.py tests/word_freq_B.py
 
 Example:
-    python tester.py word_freq_A.py word_freq_B.py
+    python tests/tester.py tests/word_freq_A.py tests/word_freq_B.py
 """
 
 import sys
@@ -19,8 +19,8 @@ import os
 
 import psutil
 import torch
-from encoder_only_VE import verify_code_semantics
-from unixcoder import UniXcoder
+from services.encoder_only_VE import verify_code_semantics
+from services.unixcoder import UniXcoder
 
 
 def read_script(path: str) -> str:
