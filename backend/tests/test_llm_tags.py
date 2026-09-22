@@ -18,6 +18,7 @@ from code_search_proxy.constants.app_constants import (
     ERROR_LLM_MALFORMED,
     ERROR_LLM_QUOTA,
     ERROR_LLM_UNAVAILABLE,
+    MAX_ATTEMPTS,
     MAX_QUERY_LENGTH,
     MAX_SUGGESTED_TAGS,
     MAX_TAGS_PER_CATEGORY,
@@ -475,7 +476,9 @@ async def test_retries_give_up_and_report_the_last_failure() -> None:
     with pytest.raises(LlmTagError, match="still busy") as exc:
         await _service(handler).extract(SNIPPET)
 
-    assert attempts["n"] == 3
+    # El tope existe por la cuota diaria, no solo por latencia: cada intento
+    # extra gasta una request de las 20 que da el free tier.
+    assert attempts["n"] == MAX_ATTEMPTS
     assert exc.value.code == ERROR_LLM_UNAVAILABLE
 
 

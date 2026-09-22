@@ -200,9 +200,14 @@ such hint, because grep cannot read it either.
 
 A rejected key comes back as **502 and not 401**. A 401 from Gemini means *our*
 credential is wrong, and forwarding it would make the frontend think the user is
-not signed in. Transient failures (429, 5xx, network) are retried up to three
-times with exponential backoff, honouring `Retry-After` when the provider sends
-one; `401`/`403` are not retried, because a key does not fix itself.
+not signed in. Transient failures (429, 5xx, network) are retried **once** with
+exponential backoff, honouring `Retry-After` when the provider sends one;
+`401`/`403` are not retried, because a key does not fix itself.
+
+Two attempts rather than more is a quota decision, not a latency one. The free
+tier allows a low number of requests per day, so every retry costs a share of
+it; one retry absorbs the isolated 503 that actually happens in practice, while
+three would let a bad afternoon at the provider spend the whole day's budget.
 
 ### Manual smoke
 
@@ -232,8 +237,10 @@ that is in review. Once both are on `main`:
   ```
 
   with the service built in the lifespan next to `GitHubClient`.
-- `GeminiSettings` folds into `Settings` in `config.py`, and `GEMINI_API_KEY`
-  joins `GITHUB_TOKEN` in `backend/.env.example`.
+- `GeminiSettings` folds into `Settings` in `config.py`.
+- `backend/.env.example` exists on both branches — this one documents
+  `GEMINI_API_KEY`, #3's documents `GITHUB_TOKEN`. Keep both variables in the
+  merged file; neither version is a superset of the other.
 
 ## Tests
 

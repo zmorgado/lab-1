@@ -71,7 +71,11 @@ MAX_SOURCE_CHARS: Final = 20_000
 # recuperable si el Retry-After es corto. Un 401/403 no se reintenta: la key
 # no va a mejorar sola.
 RETRYABLE_STATUS: Final[frozenset[int]] = frozenset({429, 500, 502, 503, 504})
-MAX_ATTEMPTS: Final = 3
+# Dos y no tres: el free tier son 20 requests por dia, asi que cada reintento
+# cuesta un 50% mas de presupuesto diario. Dos alcanza para absorber el 503
+# aislado, que es el caso que se ve en la practica; con tres, una tarde con el
+# proveedor inestable se come la cuota entera del dia.
+MAX_ATTEMPTS: Final = 2
 BACKOFF_BASE_SECONDS: Final = 1.0
 # Si Gemini pide esperar mas que esto, no vale la pena tener el request colgado
 MAX_RETRY_AFTER_SECONDS: Final = 20.0
