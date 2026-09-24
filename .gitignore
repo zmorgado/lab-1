@@ -29,10 +29,10 @@ __pycache__/
 .venv
 .pytest_cache/
 
-# Virtual environments (global)
-mi_entorno_venv/
-env/
-venv/
+# Credenciales: el proxy (#3) lee GITHUB_TOKEN del entorno o de backend/.env
+.env
+.env.*
+!.env.example
 
 # Hugging Face / PyTorch cache
 .cache/
