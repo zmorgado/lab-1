@@ -39,3 +39,6 @@ __pycache__/
 # Personal Claude Code instructions
 CLAUDE.local.md
 .claude/settings.local.json
+
+# Hugging Face / PyTorch cache
+.cache/

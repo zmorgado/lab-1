@@ -6,16 +6,19 @@ requires-python = ">=3.12"
 dependencies = [
     # Cliente HTTP compartido: lo usa el servicio de tags por LLM (#7) y lo va
     # a usar el proxy de GitHub (#3). MockTransport permite testear sin red.
+    "torch>=2.8.0",
+    "transformers>=4.57.6",
+    "psutil>=6.0.0",
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
     "python-dotenv>=1.2.3",
     "uvicorn[standard]>=0.53.0",
 ]
 
-# 'uv run llm-tag-service' levanta el servicio de tags sin tener que recordar
-# el modulo de uvicorn. #3 agrega 'code-search-proxy' al lado.
+# 'uv run code-search-proxy' levanta el servicio sin tener que recordar el
+# modulo de uvicorn
 [project.scripts]
-llm-tag-service = "code_search_proxy.tags_api:main"
+code-search-proxy = "code_search_proxy.main:main"
 
 [dependency-groups]
 dev = [
@@ -26,17 +29,18 @@ dev = [
 
 # El backend existe como paquete instalable (no solo un directorio de scripts)
 # para que 'uv sync' lo instale editable: los tests importan code_search_proxy
-# igual que lo va a hacer uvicorn en produccion, sin depender del cwd.
+# y services (el servicio de embeddings) igual que lo va a hacer uvicorn
+# en produccion, sin depender del cwd.
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/code_search_proxy"]
+packages = ["src/code_search_proxy", "services"]
 
 [tool.pytest.ini_options]
-# 'tests' es la raiz de la suite; el paquete se importa instalado (src layout),
-# no desde el directorio de trabajo, asi que no hace falta tocar sys.path.
+# 'tests' es la raiz de la suite. El paquete se instala editable (src layout),
+# pero conftest.py igual asegura 'src/' en sys.path: ver el comentario de ahi.
 testpaths = ["tests"]
 # Los tests del cliente HTTP y de los endpoints son async: 'auto' evita tener que
 # marcar cada uno con @pytest.mark.asyncio
