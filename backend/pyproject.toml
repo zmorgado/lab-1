@@ -4,10 +4,11 @@ version = "0.1.0"
 description = "Authenticated GitHub code-search proxy for LAB #1."
 requires-python = ">=3.12"
 dependencies = [
+    # Cliente HTTP compartido: lo usa el servicio de tags por LLM (#7) y lo va
+    # a usar el proxy de GitHub (#3). MockTransport permite testear sin red.
     "torch>=2.8.0",
     "transformers>=4.57.6",
     "psutil>=6.0.0",
-
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
     "python-dotenv>=1.2.3",

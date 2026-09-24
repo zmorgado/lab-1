@@ -28,11 +28,17 @@ __pycache__/
 *.py[cod]
 .venv
 .pytest_cache/
+.vscode
 
-# Credenciales: el proxy (#3) lee GITHUB_TOKEN del entorno o de backend/.env
+# Credenciales: el proxy (#3) lee GITHUB_TOKEN y el servicio de tags (#7)
+# lee GEMINI_API_KEY, los dos del entorno o de backend/.env
 .env
 .env.*
 !.env.example
+
+# Personal Claude Code instructions
+CLAUDE.local.md
+.claude/settings.local.json
 
 # Hugging Face / PyTorch cache
 .cache/
