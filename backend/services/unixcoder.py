@@ -80,7 +80,7 @@ class UniXcoder(nn.Module):
     def forward(self, source_ids):   
         """ Obtain token embeddings and sentence embeddings """
         mask = source_ids.ne(self.config.pad_token_id)
-        token_embeddings = self.model(source_ids,attention_mask = mask.unsqueeze(1) * mask.unsqueeze(2))[0]
+        token_embeddings = self.model(source_ids, attention_mask=(mask.unsqueeze(1) * mask.unsqueeze(2)).unsqueeze(1))[0]
         sentence_embeddings = (token_embeddings * mask.unsqueeze(-1)).sum(1) / mask.sum(-1).unsqueeze(-1)
         return token_embeddings, sentence_embeddings       
 
@@ -92,7 +92,7 @@ class UniXcoder(nn.Module):
             mask = self.bias[:,:source_ids.size(-1),:source_ids.size(-1)]
         else:
             mask = source_ids.ne(self.config.pad_token_id)
-            mask = mask.unsqueeze(1) * mask.unsqueeze(2)  
+            mask = (mask.unsqueeze(1) * mask.unsqueeze(2)).unsqueeze(1)  
             
         if eos_id is None:
             eos_id = self.config.eos_token_id
