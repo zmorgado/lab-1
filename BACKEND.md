@@ -10,8 +10,13 @@ see the stack decision on #3 for why it is Python rather than Node/TS:
 - the embedding stage: UniXcoder + cosine ranking (#21, after the #18 spike)
 - the result mapper the frontend renders (#8) and error codes (#9)
 
-#3 landed the first two endpoints and the app skeleton (FastAPI + uvicorn);
-everything else on that list is still to come. Issue #1 is the spec.
+#3 landed the first two endpoints and the app skeleton (FastAPI + uvicorn). #21
+landed the embedding stage as a library in `services/`, which the app does not
+call yet. Everything else on that list is still to come. Issue #1 is the spec.
+
+The layout is about to change: `services/` moves into the package, which is
+renamed `snippet_search`, and the frontend moves to `frontend/`. See *Decided
+restructure* in `CLAUDE.md`.
 
 ## Commands
 
@@ -113,6 +118,32 @@ with a token, whatever their access. Note that a search run against **your** own
 token also returns private repositories you can see (`docs/research/tests.md`
 shows one), which is why #8 dedupes on `sha` and drops private hits.
 
+## Embedding stage (#21)
+
+UniXcoder embeds the snippet and the candidates, and cosine similarity scores
+them. It lives in `services/`, a second top-level package next to
+`code_search_proxy` (both listed under `packages` in `pyproject.toml`):
+
+| File | What it holds |
+| --- | --- |
+| `services/unixcoder.py` | Microsoft's `UniXcoder` model class, vendored with its MIT header |
+| `services/encoder_only_VE.py` | `verify_code_semantics(query, code_snippets, model=None)`: one cosine score per candidate |
+
+It is a library for now: no endpoint, and nothing in the app calls it. The
+first call downloads `microsoft/unixcoder-base` from Hugging Face; pass a loaded
+`model` to avoid reloading it on every call. `torch`, `transformers` and
+`psutil` are in the dependency list for this stage.
+
+To see a score by hand, compare two files:
+
+```
+uv run python tests/tester.py tests/word_freq_A.py tests/word_freq_B.py
+```
+
+It prints the similarity and a time/memory report. On an interpreter with the
+`.pth` quirk above, `No module named 'services'` is fixed the same way, with
+`PYTHONPATH=.` instead of `PYTHONPATH=src`.
+
 ## Tests
 
 `pytest` is the test runner, configured in `pyproject.toml` under
@@ -130,6 +161,11 @@ holds the shared fixtures and points `DEFAULT_ENV_FILE` at a throwaway path, so
 the suite's result does not depend on whether you happen to have a `.env`. Tests
 live in `backend/tests/`, mirroring the module they cover, not colocated (that
 differs from the frontend, where Vitest tests sit next to the source).
+
+Not everything in `backend/tests/` is a test. `tester.py`, `word_freq_A.py`,
+`word_freq_B.py` and `testing_snippets.txt` are the manual UniXcoder runner and
+its inputs. pytest only collects `test_*.py`, so `uv run pytest` never loads the
+model.
 
 - Run everything: `uv run pytest`
 - Run one file: `uv run pytest tests/test_app.py`

@@ -1,5 +1,6 @@
-"""Proxy autenticado de busqueda de codigo (#3).
+"""Backend de LAB #1.
 
-Todavia no expone endpoints: este paquete existe para que el runner de tests
-tenga algo real que importar antes de que #3 escriba el servicio FastAPI.
+Por ahora tiene el proxy autenticado de busqueda de codigo y la app FastAPI
+donde se van a colgar las demas etapas del pipeline. La etapa de embeddings
+(#21) todavia vive afuera, en 'services/'. Ver BACKEND.md.
 """
