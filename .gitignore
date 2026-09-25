@@ -36,3 +36,6 @@ __pycache__/
 
 # Hugging Face / PyTorch cache
 .cache/
+
+# OpenCode config (instrucciones locales de mi agente)
+.opencode/
