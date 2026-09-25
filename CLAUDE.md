@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `main` carries everything: the design sources plus the code, since `feature/initial-frontend` was merged in PR #16. Two codebases sit side by side, with separate toolchains:
 
-- **root** — the React + TypeScript + Vite frontend (`src/`, `package.json`, pnpm).
+- **`frontend/`** — the React + TypeScript + Vite frontend (`src/`, `package.json`, pnpm).
 - **`backend/`** — the Python service (`pyproject.toml`, uv). It will hold the whole pipeline: proxy, tag extraction, AST stage and embeddings. So far it has the proxy from #3 (`/health`, `/api/search/code`, `/api/contents`, in `src/code_search_proxy/`) and the UniXcoder embedding stage from #21 (`backend/services/`, a library the app doesn't call yet). Tags, AST and the orchestration are still to come.
 - **`docs/research/`** — the design sources: `solution-schematics-v2.md`, `multiple-snippet-sorting-solution.md`, `unixcoder-verificacion.md`, the reference PDFs, `discussion.txt`, `tests.md` and the `generacion-de-tags-query.py` sketch. Committed sources, not generated output — cite them rather than re-deriving.
 - **`docs/diagrams/`** — the architecture diagram (`lab-1.architecture.html`, generated from `lab-1.architecture.json`).
@@ -14,11 +14,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `origin/feature/initial-frontend` still exists but is behind `main`; work from `main`.
 
-### Decided restructure, not done yet
+### Decided restructure, backend half not done yet
 
-Frontend and backend grew into the same repo without a plan, so the layout is getting reshuffled. Decided, still to be done:
+Frontend and backend grew into the same repo without a plan, so the layout is getting reshuffled. The frontend half is done: it moved out of the root into **`frontend/`**, so the root only holds `docs/`, `backend/`, `frontend/`, the agent files and `.gitignore`. Decided, still to be done, after #27 merges:
 
-- The frontend moves out of the root into **`frontend/`**, so the root only holds `docs/`, the agent/readme files and `.gitignore`.
 - The Python package **`code_search_proxy` is renamed `snippet_search`**, since it holds the whole pipeline and not just the proxy.
 - **`backend/services/` moves into the package.** Stages are flat modules (`github.py`, `llm_tags.py`, ...), and a stage gets a subpackage only when it has several files. The embeddings stage does: the vendored `unixcoder.py` plus the ranking.
 - **`backend/tests/` keeps only pytest.** The manual UniXcoder runner and its inputs move to `backend/scripts/`.
@@ -50,7 +49,7 @@ Consequences worth keeping in mind when planning work:
 
 ## Commands
 
-Frontend, from the repo root. Package manager is **pnpm** (`pnpm-lock.yaml`).
+Frontend, from `frontend/`. Package manager is **pnpm** (`frontend/pnpm-lock.yaml`).
 
 ```
 pnpm install
@@ -69,7 +68,7 @@ uv run code-search-proxy   # the service on 127.0.0.1:8000; needs a GitHub token
 uv run pytest
 ```
 
-**The two test commands are separate and neither runs the other**: `pnpm test` is Vitest over the frontend, `uv run pytest` is pytest over the Python service. See `FRONTEND.md` and `BACKEND.md` for how to run a single test in each. `docs/research/tests.md` is a captured API response, not a test suite; nothing runs in CI, because there is no CI.
+**The two test commands are separate and neither runs the other**: `pnpm test` is Vitest over the frontend, `uv run pytest` is pytest over the Python service. See `frontend/FRONTEND.md` and `BACKEND.md` for how to run a single test in each. `docs/research/tests.md` is a captured API response, not a test suite; nothing runs in CI, because there is no CI.
 
 ## The pipeline
 
@@ -95,6 +94,8 @@ The diagram is `docs/diagrams/lab-1.architecture.html`, generated from the JSON 
 
 ## Frontend architecture
 
+Everything in this section lives under `frontend/`, and the paths below are relative to it.
+
 React 19, Vite 8, Tailwind v4 (via `@tailwindcss/vite`, not a PostCSS config), react-router v8 (`createBrowserRouter` in `src/router/`), axios, Phosphor icons. `@/` is aliased to `src/` in both `vite.config.ts` and the tsconfigs — use it rather than deep relative paths.
 
 The directory names encode a layering that is worth respecting:
@@ -105,7 +106,7 @@ The directory names encode a layering that is worth respecting:
 - `utility/` — pure helpers *and* React hooks (`UseDismissable`, `UseFocusWhen`, `UseScrollIntoView`), despite the name.
 - `components/`, `pages/`, `layouts/` — presentation. `pages/Search.tsx` holds essentially all search state and orchestration.
 
-There is no `README.md`: #2 renamed the stock Vite template readme to `FRONTEND.md` and replaced it with real frontend docs.
+There is no `README.md`: #2 renamed the stock Vite template readme to `FRONTEND.md` (now `frontend/FRONTEND.md`) and replaced it with real frontend docs.
 
 ### The search flow, and why most of it is leaving
 

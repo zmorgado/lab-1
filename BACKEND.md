@@ -15,8 +15,8 @@ landed the embedding stage as a library in `services/`, which the app does not
 call yet. Everything else on that list is still to come. Issue #1 is the spec.
 
 The layout is about to change: `services/` moves into the package, which is
-renamed `snippet_search`, and the frontend moves to `frontend/`. See *Decided
-restructure* in `CLAUDE.md`.
+renamed `snippet_search`. The frontend already moved to `frontend/`. See
+*Decided restructure* in `CLAUDE.md`.
 
 ## Commands
 
@@ -172,6 +172,6 @@ model.
 - Run one test by name: `uv run pytest tests/test_app.py::test_health_reports_ok`
 - Run every test matching a substring: `uv run pytest -k rate_limit`
 
-This is **separate from the frontend's `pnpm test`** (Vitest, run from the repo
-root — see `FRONTEND.md`). Neither command runs the other, so a full local check
+This is **separate from the frontend's `pnpm test`** (Vitest, run from
+`frontend/` — see `frontend/FRONTEND.md`). Neither command runs the other, so a full local check
 means running both. Nothing enforces that yet: the repo has no CI.

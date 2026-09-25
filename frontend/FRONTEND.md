@@ -5,9 +5,11 @@ React + TypeScript + Vite frontend for LAB #1. `@` is aliased to `src/` (`vite.c
 The frontend's job is shrinking: #19 moves the query building and the GitHub call
 into `backend/`, leaving the chat state and the rendering here. #23 adds the card
 for code-match results (snippet, path, score) that replaces the repository card.
-See `CLAUDE.md` for the layering and issue #1 for the pipeline.
+See `CLAUDE.md` at the repo root for the layering and issue #1 for the pipeline.
 
 ## Commands
+
+Run from `frontend/`, not from the repo root.
 
 ```
 pnpm install
@@ -26,7 +28,7 @@ Vitest is the test runner (native to the Vite build tool, so `vitest.config.ts` 
 - Run one file: `pnpm test src/utility/ToggleArrayItem.test.ts`
 - Run by test name: `pnpm test -t "<name>"` (no extra `--` before `-t`, or the flag doesn't reach Vitest through pnpm)
 
-`pnpm test` covers the frontend only. The Python service in `backend/` has its own runner (`uv run pytest`, from `backend/`) — see `BACKEND.md`.
+`pnpm test` covers the frontend only. The Python service in `backend/` has its own runner (`uv run pytest`, from `backend/`) — see `BACKEND.md` at the repo root.
 
 Test at the boundary of a unit: its input and its output. Don't assert internals
 (regex patterns, intermediate arrays, prompt wording) — those are exactly what
