@@ -1,0 +1,67 @@
+#@@ ORIGINAL | referencia: ordenar un diccionario por valor
+def sort_dictionary(d):
+    # Sort dictionary by value using lambda
+    return dict(sorted(d.items(), key=lambda item: item[1]))
+
+#@@ NIVEL 1 | clon casi identico: solo cambian los nombres (Type-2)
+def order_mapping(data):
+    # Order mapping by its values using a lambda
+    return dict(sorted(data.items(), key=lambda pair: pair[1]))
+
+#@@ NIVEL 2 | misma funcionalidad, sintaxis distinta (itemgetter + reverse)
+from operator import itemgetter
+
+def rank_by_value(scores):
+    ordered = sorted(scores.items(), key=itemgetter(1), reverse=True)
+    return {k: v for k, v in ordered}
+
+#@@ NIVEL 3 | misma funcionalidad, algoritmo distinto (seleccion manual, sin sorted)
+def manual_value_sort(d):
+    remaining = dict(d)
+    result = {}
+    while remaining:
+        min_key = None
+        for k, v in remaining.items():
+            if min_key is None or v < remaining[min_key]:
+                min_key = k
+        result[min_key] = remaining.pop(min_key)
+    return result
+
+#@@ NIVEL 4 | misma estructura, distinto criterio (ordena por CLAVE)
+def sort_dictionary_by_key(d):
+    return dict(sorted(d.items(), key=lambda item: item[0]))
+
+#@@ NIVEL 5 | ordenar, pero otra estructura de datos (lista de dicts por campo)
+def sort_records(records, field):
+    return sorted(records, key=lambda r: r[field])
+
+#@@ NIVEL 6 | opera sobre diccionarios, sin ordenar (filtrar por valor)
+def filter_by_value(d, threshold):
+    return {k: v for k, v in d.items() if v > threshold}
+
+#@@ NIVEL 7 | opera sobre diccionarios, sin ordenar (invertir clave/valor)
+def invert_dictionary(d):
+    return {v: k for k, v in d.items()}
+
+#@@ NIVEL 8 | manipulacion de strings, sin relacion con diccionarios
+def reverse_words(text):
+    return " ".join(reversed(text.split()))
+
+#@@ NIVEL 9 | I/O de archivos, sin relacion
+def read_lines(path):
+    with open(path, encoding="utf-8") as f:
+        return [line.strip() for line in f if line.strip()]
+
+#@@ NIVEL 10 | totalmente distinto: red / HTTP
+import requests
+
+def fetch_json(url, timeout=10):
+    response = requests.get(url, timeout=timeout)
+    response.raise_for_status()
+    return response.json()
+
+#@@ NIVEL 11 | totalmente distinto: matematica recursiva
+def factorial(n):
+    if n <= 1:
+        return 1
+    return n * factorial(n - 1)
