@@ -4,6 +4,9 @@ Es un pass-through fino: recibe una query ya armada, le pega la credencial y
 devuelve lo que contesto GitHub. No arma queries (eso es #19) ni reformatea
 resultados (eso es #8). Lo unico que agrega son los headers de rate limit, que
 son la unica senal de cuanto queda del presupuesto compartido.
+
+Tambien expone el servicio de tags por LLM (#7), que no tiene nada que ver con
+GitHub: recibe un snippet y devuelve las cinco categorias de tags.
 """
 
 from __future__ import annotations
@@ -18,6 +21,8 @@ from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
 from .config import Settings, load_settings
 from .github import GitHubClient, GitHubError, RateLimit
+from .llm_tags import GeminiTagService, LlmTagError
+from .tags_api import TagsDep, TagsRequest, TagsResponse, handle_llm_tag_error
 
 # 'owner/name', el formato que devuelve search/code en repository.full_name
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
@@ -54,8 +59,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Un solo cliente para todo el proceso: comparte el pool de conexiones
-        async with GitHubClient(resolved) as github:
+        async with GitHubClient(resolved) as github, GeminiTagService(resolved) as tags:
             app.state.github = github
+            app.state.tags = tags
             yield
 
     app = FastAPI(
@@ -68,7 +74,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(DEV_ORIGINS),
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST"],
         allow_headers=["*"],
         # El frontend necesita poder leer el rate limit, y los headers que no son
         # 'simple' quedan ocultos a menos que se expongan explicitamente
@@ -91,6 +97,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             headers=_rate_limit_headers(error.rate_limit),
         )
 
+    app.add_exception_handler(LlmTagError, handle_llm_tag_error)
+
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
@@ -109,6 +117,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(
             content=result.body, headers=_rate_limit_headers(result.rate_limit)
         )
+
+    @app.post("/api/tags")
+    async def extract_tags(tags: TagsDep, payload: TagsRequest) -> TagsResponse:
+        result = await tags.extract(payload.source, language=payload.language)
+        return TagsResponse(language=result.language, tags=result.as_dict())
 
     @app.get("/api/contents", response_class=PlainTextResponse)
     async def get_file_contents(

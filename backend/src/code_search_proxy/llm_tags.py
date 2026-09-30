@@ -1,56 +1,154 @@
 """Servicio de tags por LLM (#7).
 
-Etapa 2 del pipeline: toma un snippet pegado o un archivo entero y devuelve las
-cinco categorias de tags de `docs/research/solution-schematics-v2.md`.
-Complementa al servicio de grep (#4), no lo reemplaza.
+Etapa 2 del pipeline: toma un snippet pegado y devuelve las cinco categorias de
+tags de `docs/research/solution-schematics-v2.md`. Complementa al servicio de
+grep (#4), no lo reemplaza: el grep saca lo que el codigo dice literal, y el LLM
+lo que el codigo *es*. Que tags entran a la query se decide en #19.
 
-El cliente es async y se usa como context manager, igual que `GitHubClient` en
-el proxy (#3): las dos cosas terminan colgadas del mismo lifespan de FastAPI y
-un `httpx.Client` sincrono adentro de un `async def` frenaria el event loop los
+El cliente es async y se usa como context manager, igual que `GitHubClient`:
+las dos cosas terminan colgadas del mismo lifespan de FastAPI y un
+`httpx.Client` sincrono adentro de un `async def` frenaria el event loop los
 segundos que tarda el modelo.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
-from dataclasses import replace
-from pathlib import Path
+from dataclasses import dataclass
 from types import TracebackType
-from typing import Any
+from typing import Any, Final
 
 import httpx
 
-from code_search_proxy.constants.app_constants import (
-    BACKOFF_BASE_SECONDS,
-    DEFAULT_MAX_QUERY_TAGS,
-    ERROR_EMPTY_SOURCE,
-    ERROR_LLM_FAILED,
-    ERROR_LLM_MALFORMED,
-    ERROR_LLM_UNAVAILABLE,
-    GEMINI_BASE_URL,
-    GENERIC_TAGS,
-    MAX_ATTEMPTS,
-    MAX_QUERY_LENGTH,
-    MAX_RETRY_AFTER_SECONDS,
-    MAX_SOURCE_CHARS,
-    MAX_SUGGESTED_TAGS,
-    MAX_TAGS_PER_CATEGORY,
-    MIN_TAG_LENGTH,
-    RETRYABLE_STATUS,
-    TIER_ORDER,
-    _SYSTEM_INSTRUCTION,
+from .config import Settings
+
+GEMINI_BASE_URL: Final = "https://generativelanguage.googleapis.com/v1beta"
+
+# Orden de las categorias, de la mas literal a la mas descriptiva
+CATEGORIES: Final[tuple[str, ...]] = (
+    "api_calls",
+    "data_structures",
+    "paradigm",
+    "algorithm",
+    "domain_keywords",
 )
-from code_search_proxy.contracts.llm_response_schema import _RESPONSE_SCHEMA
-from code_search_proxy.contracts.tags_set import TagSet
-from code_search_proxy.errors.llm_tag_error import (
-    LlmTagError,
-    _error_code,
-    _error_message,
-    _retry_after_seconds,
-    _status_for,
-)
-from code_search_proxy.llm_config import GeminiSettings
+
+# El modelo ignora el "at most 6 per category" del prompt cuando el archivo es
+# grande, asi que el tope se aplica tambien del lado del codigo.
+MAX_TAGS_PER_CATEGORY: Final = 6
+
+MAX_SOURCE_CHARS: Final = 20_000
+
+GEMINI_TIMEOUT_SECONDS: Final = 60.0
+
+# Codigos de error estables para el cliente (#7 AC: "enabling fallback to grep
+# extraction"). El texto del proveedor cambia y esta en ingles de Google; esto
+# no cambia, y es lo que mira quien llama para decidir si cae al grep (#4).
+ERROR_EMPTY_SOURCE: Final = "empty_source"
+ERROR_LLM_AUTH: Final = "llm_auth"
+ERROR_LLM_QUOTA: Final = "llm_quota_exhausted"
+ERROR_LLM_UNAVAILABLE: Final = "llm_unavailable"
+ERROR_LLM_MALFORMED: Final = "llm_malformed_response"
+ERROR_LLM_FAILED: Final = "llm_request_failed"
+
+_SYSTEM_INSTRUCTION: Final = """\
+You describe a code snippet as search tags. A separate regex tool already
+extracts whatever is written literally in the code (identifiers, calls,
+keywords), so do not limit yourself to that. Your job is what the regex cannot
+do: say what the code *is*, including things the source never spells out.
+
+Fill five categories:
+
+- api_calls: the library and builtin calls the code relies on, as written:
+  `sorted`, `items`, `train_test_split`.
+- data_structures: the data structures the code operates on, by name: `dict`,
+  `defaultdict`, `DataFrame`, `heap`.
+- paradigm: the programming paradigm or idiom, described in plain words even if
+  no keyword names it: `higher-order function`, `comprehension`, `recursion`,
+  `lambda`.
+- algorithm: what the code does, the way a developer would describe it:
+  `sort dict by value`, `binary search`, `memoize`.
+- domain_keywords: the problem domain: `ranking`, `pagination`, `checksum`.
+- language: the source language in GitHub's spelling (`Python`, `JavaScript`,
+  `Jupyter Notebook`, `C++`). Infer it from the code if it was not given.
+
+Rules:
+- Never invent an API the snippet does not use or clearly imply.
+- At most 6 tags per category, fewer when the snippet is short, most relevant
+  first. An empty category is fine.
+- Return only the JSON object. No prose, no markdown fences.\
+"""
+
+# Schema OpenAPI que Gemini respeta al generar. Con `responseMimeType` en JSON
+# la respuesta viene garantizada con esta forma, asi que no hace falta parsear
+# markdown ni pedirle al modelo "devolveme JSON y nada mas"
+_RESPONSE_SCHEMA: Final[dict[str, Any]] = {
+    "type": "OBJECT",
+    "properties": {
+        **{c: {"type": "ARRAY", "items": {"type": "STRING"}} for c in CATEGORIES},
+        "language": {"type": "STRING"},
+    },
+    "required": [*CATEGORIES, "language"],
+    "propertyOrdering": [*CATEGORIES, "language"],
+}
+
+
+@dataclass(frozen=True)
+class TagSet:
+    """Las cinco categorias de la Etapa 2, ya normalizadas y deduplicadas."""
+
+    api_calls: tuple[str, ...] = ()
+    data_structures: tuple[str, ...] = ()
+    paradigm: tuple[str, ...] = ()
+    algorithm: tuple[str, ...] = ()
+    domain_keywords: tuple[str, ...] = ()
+    language: str | None = None
+
+    def as_dict(self) -> dict[str, list[str]]:
+        """Las categorias en orden, para serializar sin perder el orden."""
+        return {category: list(getattr(self, category)) for category in CATEGORIES}
+
+
+class LlmTagError(RuntimeError):
+    """Falla del servicio de tags: entrada invalida, red, HTTP o respuesta rota.
+
+    Es el unico tipo que sale de este modulo: quien llama no toca httpx ni JSON.
+
+    Lleva `status_code` y `body` como `GitHubError`, para que el handler de
+    FastAPI sea parecido de los dos lados. `code` es el identificador estable que
+    mira el cliente; el texto del proveedor viaja en `message` y puede cambiar.
+
+    El status sale del `code` y no del que mando Gemini: un 401 de arriba es
+    *nuestra* key, y reenviarlo haria pensar al browser que el usuario no esta
+    autenticado. Solo la cuota viaja como 429, para que el cliente reintente.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = ERROR_LLM_FAILED,
+        retry_after: int | None = None,
+    ) -> None:
+        self.code = code
+        self.status_code = {
+            ERROR_EMPTY_SOURCE: 422,
+            ERROR_LLM_QUOTA: 429,
+            ERROR_LLM_UNAVAILABLE: 503,
+        }.get(code, 502)
+        self.retry_after = retry_after
+        # El pipeline puede seguir con los tags del grep (#4) salvo que el
+        # problema sea el snippet mismo: ahi el grep tampoco tiene que leer
+        self.fallback = None if code == ERROR_EMPTY_SOURCE else "grep"
+        super().__init__(message)
+
+    @property
+    def body(self) -> dict[str, Any]:
+        """El cuerpo JSON de la respuesta, con la misma forma que usa el proxy."""
+        payload: dict[str, Any] = {"code": self.code, "message": str(self)}
+        if self.fallback is not None:
+            payload["fallback"] = self.fallback
+        return payload
 
 
 class GeminiTagService:
@@ -62,20 +160,11 @@ class GeminiTagService:
 
     def __init__(
         self,
-        settings: GeminiSettings,
+        settings: Settings,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self._settings = settings
-        self._owns_client = client is None
-        self._client = client or httpx.AsyncClient(timeout=settings.timeout)
-
-    @property
-    def model(self) -> str:
-        return self._settings.model
-
-    @property
-    def timeout(self) -> float:
-        return self._settings.timeout
+        self._client = client or httpx.AsyncClient(timeout=GEMINI_TIMEOUT_SECONDS)
 
     async def __aenter__(self) -> "GeminiTagService":
         return self
@@ -89,54 +178,44 @@ class GeminiTagService:
         await self.aclose()
 
     async def aclose(self) -> None:
-        # Solo se cierra el cliente que armo este servicio; uno inyectado es del
-        # que llama y puede seguir usandose para el resto del pipeline.
-        if self._owns_client:
-            await self._client.aclose()
+        await self._client.aclose()
 
-    async def extract(
-        self,
-        source: str,
-        *,
-        language: str | None = None,
-        filename: str | None = None,
-    ) -> TagSet:
-        """Saca los tags de un snippet pegado o de un archivo entero.
+    async def extract(self, source: str, *, language: str | None = None) -> TagSet:
+        """Saca los tags de un snippet pegado.
 
-        `language` y `filename` son opcionales: si vienen, el modelo no tiene
-        que inferir el lenguaje, que es donde mas se equivoca con snippets
-        cortos o con sintaxis compartida entre lenguajes.
+        `language` es opcional: si viene, el modelo no tiene que inferir el
+        lenguaje, que es donde mas se equivoca con snippets cortos o con
+        sintaxis compartida entre lenguajes.
         """
-        if not source or not source.strip():
+        if not source.strip():
             raise LlmTagError(
-                "Empty source: nothing to extract tags from.",
-                code=ERROR_EMPTY_SOURCE,
-                status_code=422,
+                "Empty source: nothing to extract tags from.", code=ERROR_EMPTY_SOURCE
             )
 
-        payload = self._build_payload(source, language=language, filename=filename)
+        if not self._settings.gemini_api_key:
+            # El LLM es un complemento: sin key el resto del servicio anda y el
+            # cliente cae al grep, igual que si el proveedor estuviera caido
+            raise LlmTagError(
+                "The LLM is not configured: GEMINI_API_KEY is empty.",
+                code=ERROR_LLM_UNAVAILABLE,
+            )
+
+        payload = self._build_payload(source, language=language)
         data = await self._post(payload)
         return self._to_tag_set(data, fallback_language=language)
 
     # --- interno ---------------------------------------------------------
 
-    def _build_payload(
-        self, source: str, *, language: str | None, filename: str | None
-    ) -> dict[str, Any]:
-        header = []
-        if filename:
-            header.append(f"Filename: {filename}")
-        if language:
-            header.append(f"Language: {language}")
-        header.append("Code:")
-        prompt = "\n".join(header) + "\n\n" + source[:MAX_SOURCE_CHARS]
+    def _build_payload(self, source: str, *, language: str | None) -> dict[str, Any]:
+        header = f"Language: {language}\n" if language else ""
+        prompt = f"{header}Code:\n\n{source[:MAX_SOURCE_CHARS]}"
 
         return {
             "systemInstruction": {"parts": [{"text": _SYSTEM_INSTRUCTION}]},
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {
                 # temperature 0: la extraccion de tags tiene que ser estable;
-                # dos corridas sobre el mismo snippet deben dar la misma query.
+                # dos corridas sobre el mismo snippet deben dar los mismos tags.
                 "temperature": 0.0,
                 "responseMimeType": "application/json",
                 "responseSchema": _RESPONSE_SCHEMA,
@@ -148,271 +227,90 @@ class GeminiTagService:
         }
 
     async def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
-        response = await self._send_with_retries(payload)
+        url = f"{GEMINI_BASE_URL}/models/{self._settings.gemini_model}:generateContent"
+        headers = {"x-goog-api-key": self._settings.gemini_api_key or ""}
 
         try:
-            body = response.json()
-            text = body["candidates"][0]["content"]["parts"][0]["text"]
+            response = await self._client.post(url, json=payload, headers=headers)
+        except httpx.HTTPError as exc:
+            # Timeout, DNS, conexion cortada
+            raise LlmTagError(
+                f"LLM request failed: {exc}", code=ERROR_LLM_UNAVAILABLE
+            ) from exc
+
+        if response.status_code != 200:
+            raise LlmTagError(
+                f"Gemini answered HTTP {response.status_code}: {response.text[:200]}",
+                code=_error_code(response.status_code),
+                retry_after=_retry_after_seconds(response),
+            )
+
+        try:
+            text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
         except (ValueError, KeyError, IndexError, TypeError) as exc:
             # Sin `candidates` la causa tipica es un corte por filtro de safety
             # o por maxTokens; `promptFeedback` lo aclara cuando viene.
-            raise _malformed(f"Malformed LLM response: {exc}") from exc
+            raise LlmTagError(
+                f"Malformed LLM response: {exc}", code=ERROR_LLM_MALFORMED
+            ) from exc
 
         try:
             data = json.loads(text)
         except ValueError as exc:
-            raise _malformed(f"LLM returned non-JSON content: {exc}") from exc
+            raise LlmTagError(
+                f"LLM returned non-JSON content: {exc}", code=ERROR_LLM_MALFORMED
+            ) from exc
 
         if not isinstance(data, dict):
-            raise _malformed("LLM returned JSON that is not an object.")
-        return data
-
-    async def _send_with_retries(self, payload: dict[str, Any]) -> httpx.Response:
-        """Manda el request, reintentando lo que es transitorio.
-
-        El free tier devuelve 503 "high demand" de forma intermitente: una
-        corrida falla despues de un minuto y la siguiente contesta en cinco
-        segundos. Sin reintento eso le llega al usuario como si el servicio
-        estuviera roto. Un 401/403 no se reintenta: la key no mejora sola.
-        """
-        url = f"{GEMINI_BASE_URL}/models/{self.model}:generateContent"
-        headers = {
-            "x-goog-api-key": self._settings.api_key,
-            "Content-Type": "application/json",
-        }
-
-        last_error: LlmTagError | None = None
-        for attempt in range(1, MAX_ATTEMPTS + 1):
-            try:
-                response = await self._client.post(url, json=payload, headers=headers)
-            except httpx.HTTPError as exc:
-                # Timeout, DNS, conexion cortada: transitorio, se reintenta.
-                last_error = LlmTagError(
-                    f"LLM request failed: {exc}",
-                    code=ERROR_LLM_UNAVAILABLE,
-                    status_code=_status_for(ERROR_LLM_UNAVAILABLE),
-                )
-            else:
-                if response.status_code == 200:
-                    return response
-
-                code = _error_code(response.status_code)
-                last_error = LlmTagError(
-                    _error_message(response),
-                    code=code,
-                    status_code=_status_for(code),
-                    retry_after=_retry_after_seconds(response),
-                )
-                if response.status_code not in RETRYABLE_STATUS:
-                    raise last_error
-
-            if attempt == MAX_ATTEMPTS:
-                break
-            await asyncio.sleep(_backoff_seconds(attempt, last_error.retry_after))
-
-        if last_error is None:  # pragma: no cover - el loop corre al menos una vez
-            last_error = LlmTagError(
-                "LLM request failed for an unknown reason.", code=ERROR_LLM_FAILED
+            raise LlmTagError(
+                "LLM returned JSON that is not an object.", code=ERROR_LLM_MALFORMED
             )
-        raise last_error
+        return data
 
     def _to_tag_set(
         self, data: dict[str, Any], *, fallback_language: str | None
     ) -> TagSet:
         """Normaliza la salida del modelo antes de dejarla entrar al dominio.
 
-        El schema garantiza la forma, no el contenido: igual se filtran vacios,
-        se saca el ruido generico, se deduplica y se aplica el tope por
-        categoria, porque el modelo ignora el "at most 6" del prompt cuando el
-        archivo es grande y cada tag de mas solo recorta resultados.
+        El schema garantiza la forma (listas de strings), no el contenido: igual
+        se filtran vacios, se deduplica y se aplica el tope por categoria.
         """
-        categories = {category: _clean(data.get(category)) for category in TIER_ORDER}
+        categories = {category: _clean(data.get(category)) for category in CATEGORIES}
         language = data.get("language") or fallback_language
-        tags = TagSet(
+        return TagSet(
             **categories,
             language=language.strip() if isinstance(language, str) else None,
         )
-        return replace(tags, suggested=_suggested(data.get("suggested"), tags))
 
 
-def _malformed(message: str) -> LlmTagError:
-    return LlmTagError(
-        message,
-        code=ERROR_LLM_MALFORMED,
-        status_code=_status_for(ERROR_LLM_MALFORMED),
-    )
+def _clean(values: list[str] | None) -> tuple[str, ...]:
+    # dict.fromkeys deduplica conservando el orden del modelo
+    unique = dict.fromkeys(tag.strip() for tag in values or () if tag.strip())
+    return tuple(unique)[:MAX_TAGS_PER_CATEGORY]
 
 
-def _clean(values: Any, max_tags: int = MAX_TAGS_PER_CATEGORY) -> tuple[str, ...]:
-    if not isinstance(values, list):
-        return ()
-    seen: set[str] = set()
-    cleaned: list[str] = []
-    for value in values:
-        if not isinstance(value, str):
-            continue
-        tag = value.strip()
-        key = tag.casefold()
-        if len(tag) < MIN_TAG_LENGTH or key in seen or key in GENERIC_TAGS:
-            continue
-        seen.add(key)
-        cleaned.append(tag)
-        if len(cleaned) >= max_tags:
-            break
-    return tuple(cleaned)
+def _retry_after_seconds(response: httpx.Response) -> int | None:
+    """El `Retry-After` en segundos, o None si no vino o no es un numero.
 
-
-def _suggested(values: Any, tags: TagSet) -> tuple[str, ...]:
-    """Valida la pre-seleccion del modelo contra los tags que el mismo emitio.
-
-    El modelo tiene que elegir *entre* las cinco categorias, no inventar
-    strings nuevos: `suggested` es lo que el picker de #22 muestra tildado, y
-    un tag que no esta en la lista no tiene casilla que tildar. Se conserva el
-    orden del modelo (va de mas a menos distintivo) pero la grafia de la
-    categoria, que es la que ve el usuario.
-
-    Si el modelo no devolvio nada usable se cae a los tags de la query, para
-    que el picker nunca abra sin nada marcado. No se completa hasta cinco
-    cuando el modelo eligio menos: el prompt pide explicitamente que prefiera
-    quedarse corto antes que rellenar con ruido.
+    La cabecera tambien admite una fecha HTTP; no la traducimos, igual que el
+    cliente de GitHub.
     """
-    canonical = {tag.casefold(): tag for tag in tags.ordered_tags()}
-
-    seen: set[str] = set()
-    picked: list[str] = []
-    for value in values if isinstance(values, list) else ():
-        if not isinstance(value, str):
-            continue
-        key = value.strip().casefold()
-        if key in seen or key not in canonical:
-            continue
-        seen.add(key)
-        picked.append(canonical[key])
-        if len(picked) >= MAX_SUGGESTED_TAGS:
-            break
-
-    return tuple(picked) or tuple(tags.query_tags(max_tags=MAX_SUGGESTED_TAGS))
-
-
-def _backoff_seconds(attempt: int, retry_after: int | None) -> float:
-    """Cuanto esperar antes del proximo intento.
-
-    Si el proveedor dijo cuanto esperar se le hace caso, con un techo: un
-    Retry-After de minutos deja el request colgado, y eso es peor que fallar
-    rapido y dejar que el cliente caiga al grep (#4).
-    """
-    if retry_after is not None:
-        return float(min(retry_after, MAX_RETRY_AFTER_SECONDS))
-    return BACKOFF_BASE_SECONDS * (2 ** (attempt - 1))
-
-
-# --- smoke manual --------------------------------------------------------
-
-
-def _step(message: str) -> None:
-    """Una linea de progreso a stderr, con flush.
-
-    Va a stderr y no a stdout para que el resultado (los tags y la query) se
-    pueda pipear solo. El flush es necesario: sin el, Python bufferea y no se
-    ve nada hasta que el proceso termina, que es justo lo que no sirve cuando
-    la llamada al LLM tarda.
-    """
-    import sys
-
-    print(f"  {message}", file=sys.stderr, flush=True)
-
-
-async def _run(path: Path, language: str | None) -> int:
-    import sys
-    import time
-
-    from code_search_proxy.llm_config import GeminiConfigError, load_gemini_settings
-
+    raw = response.headers.get("retry-after")
+    if raw is None:
+        return None
     try:
-        source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
-    _step(f"file      {path.resolve()}")
-    _step(f"read      {len(source):,} chars, {source.count(chr(10)) + 1} lines")
-    if len(source) > MAX_SOURCE_CHARS:
-        _step(f"truncated to {MAX_SOURCE_CHARS:,} chars before sending")
-
-    try:
-        settings = load_gemini_settings()
-    except GeminiConfigError as exc:
-        print(f"\n{exc}\n", file=sys.stderr)
-        return 1
-
-    # La key no se imprime, ni siquiera enmascarada: no hace falta verla para
-    # saber que esta cargada, y el stderr de una terminal termina pegado en un
-    # issue.
-    _step(f"key       loaded ({len(settings.api_key)} chars)")
-    _step(f"model     {settings.model}  (timeout {settings.timeout:.0f}s)")
-    _step(f"language  {language or 'not given, model will infer it'}")
-    _step("sending   waiting for the LLM, this usually takes a few seconds...")
-
-    started = time.monotonic()
-    try:
-        async with GeminiTagService(settings) as service:
-            tags = await service.extract(source, language=language, filename=path.name)
-    except LlmTagError as exc:
-        elapsed = time.monotonic() - started
-        print(f"error after {elapsed:.1f}s [{exc.code}]: {exc}", file=sys.stderr)
-        if exc.fallback:
-            print(
-                f"hint: the pipeline can still run on the {exc.fallback} tags "
-                "(#4); this stage complements them, it is not a hard dependency.",
-                file=sys.stderr,
-            )
-        if "timed out" in str(exc):
-            # El caso que mas confunde: no es la key ni el codigo, es latencia.
-            print(
-                "hint: raise the ceiling with GEMINI_TIMEOUT=120, or try a "
-                "smaller file first.",
-                file=sys.stderr,
-            )
-        return 1
-
-    elapsed = time.monotonic() - started
-    total = len(tags.ordered_tags())
-    _step(f"answered  in {elapsed:.1f}s, {total} unique tags across 5 categories")
-    _step("")
-
-    for category in TIER_ORDER:
-        print(f"{category:>16}: {', '.join(getattr(tags, category)) or '-'}")
-    print(f"{'language':>16}: {tags.language or '-'}")
-    print(f"{'suggested':>16}: {', '.join(tags.suggested) or '-'}")
-
-    query = tags.to_query()
-    in_query = len(tags.query_tags())
-    print("")
-    print(f"{'q':>16}: {query}")
-    print(f"{'length':>16}: {len(query)}/{MAX_QUERY_LENGTH} chars")
-    # Lo importante no es cuanto espacio quedo libre sino cuantos terminos se
-    # estan AND-eando: ese es el numero que decide si GitHub devuelve algo.
-    print(
-        f"{'terms in q':>16}: {in_query} of {total} tags "
-        f"(top {DEFAULT_MAX_QUERY_TAGS} literal ones; GitHub ANDs them)"
-    )
-    return 0
+        return int(raw)
+    except ValueError:
+        return None
 
 
-def _main(argv: list[str]) -> int:
-    """Smoke manual: `uv run python -m code_search_proxy.llm_tags <archivo>`.
+def _error_code(status: int) -> str:
+    """El codigo estable que le corresponde a un status de Gemini."""
+    if status in (401, 403):
+        return ERROR_LLM_AUTH
+    if status == 429:
+        return ERROR_LLM_QUOTA
+    if status >= 500:
+        return ERROR_LLM_UNAVAILABLE
+    return ERROR_LLM_FAILED
 
-    Sirve para ver tags reales contra la API sin levantar el servicio. Los
-    tests no lo usan: ahi el transporte es un mock.
-    """
-    if not argv:
-        print("usage: python -m code_search_proxy.llm_tags <file> [language]")
-        return 2
-
-    return asyncio.run(_run(Path(argv[0]), argv[1] if len(argv) > 1 else None))
-
-
-if __name__ == "__main__":  # pragma: no cover
-    import sys
-
-    raise SystemExit(_main(sys.argv[1:]))
