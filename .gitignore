@@ -32,7 +32,6 @@ __pycache__/
 
 # Credenciales: el proxy (#3) lee GITHUB_TOKEN y el servicio de tags (#7)
 # lee GEMINI_API_KEY, los dos del entorno o de backend/.env
-
 .env
 .env.*
 !.env.example

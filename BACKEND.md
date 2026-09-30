@@ -146,9 +146,96 @@ It prints the similarity and a time/memory report. On an interpreter with the
 
 ```
 uv sync                 # install deps into backend/.venv
-uv run llm-tag-service  # start the tag service on 127.0.0.1:8001
+uv run code-search-proxy   # start the service on 127.0.0.1:8000
 uv run pytest           # run the test suite — exits non-zero on failure
 ```
+
+`HOST` and `PORT` override the bind address. For auto-reload while developing,
+use uvicorn directly: `uv run uvicorn code_search_proxy.main:app --reload`.
+
+**If either command dies with `ModuleNotFoundError: No module named
+'code_search_proxy'`, prefix it with `PYTHONPATH=src`.** Some python.org builds
+(3.12.8 here) skip `.pth` files whose name begins with `_`, and the editable
+install is exactly `_editable_impl_code_search_proxy.pth` with `src/` inside it,
+so the package never reaches `sys.path`. It is an interpreter quirk, not a
+project misconfiguration, and `uv sync` regenerates the same file each time:
+
+```
+PYTHONPATH=src uv run uvicorn code_search_proxy.main:app --port 8000
+```
+
+`uv run pytest` is unaffected — `tests/conftest.py` sets the path itself.
+
+## The credential
+
+The service **will not start without a GitHub token**: `search/code` rejects
+anonymous requests. The token is read server-side only and never reaches the
+client bundle. Startup fails with an actionable message, not a traceback, when it
+is missing.
+
+It is resolved in this order, so anything explicit beats anything ambient:
+
+1. **`GITHUB_TOKEN` in the environment** — `export GITHUB_TOKEN=$(gh auth token)`
+2. **`backend/.env`** — `cp .env.example .env`, then fill it in
+3. **The `gh` CLI** — nothing to configure if `gh auth status` is already green
+
+Step 3 means a machine with an authenticated `gh` needs **no setup at all**: the
+service shells out to `gh auth token` (~75ms, once at startup) and uses that. It
+is a local-development convenience only — `gh` is not a dependency, and if it is
+missing, logged out, or slow, the fallback yields nothing and startup fails with
+the usual message. **Deployments set `GITHUB_TOKEN`**; there is no `gh` there.
+
+One caveat: a `gh` token carries whatever scopes you granted the CLI, typically
+`repo`, which is broader than the `public_repo` this needs and can read private
+repositories. Fine locally, but not what you would deploy with.
+
+`backend/.env` is gitignored; `.env.example` is the committed template.
+`GITHUB_API_URL` optionally points the proxy at another instance (GitHub
+Enterprise, or a fake in tests).
+
+## Endpoints
+
+| Endpoint | Returns |
+| --- | --- |
+| `GET /health` | `{"status": "ok"}` |
+| `GET /api/search/code?q=&per_page=&page=` | GitHub's `search/code` response **unchanged** |
+| `GET /api/contents?repo=&path=&ref=` | the file's source as `text/plain` |
+
+The proxy is a thin pass-through: it attaches the credential and forwards. It
+does not build queries (#19) or reshape results (#8), and GitHub's error status
+and body are relayed as-is for #9 to map to stable error codes.
+
+`/api/contents` base64-decodes GitHub's envelope and returns just the source,
+which is what the AST stage (#20) needs; `search/code` gives back repo, path and
+sha but not the code. `repo` is `owner/name` as it appears in
+`repository.full_name`. A directory or a non-UTF-8 blob is a `415`; a file over
+GitHub's 1MB inline limit is a `413`.
+
+**Rate limit.** One token serves every user, so the budget is shared. GitHub's
+`X-RateLimit-*` headers are forwarded on every response, errors included, rather
+than being swallowed at the proxy — that is the only signal downstream has. Code
+search is a far tighter budget than the rest (`X-RateLimit-Resource: code_search`,
+10/min) and `/api/contents` spends the separate `core` budget.
+
+Verify it end to end against the real API:
+
+```
+export GITHUB_TOKEN=$(gh auth token)
+uv run code-search-proxy &
+
+curl -sD - -G localhost:8000/api/search/code \
+  --data-urlencode 'q="def get_adapter" repo:psf/requests language:python'
+
+curl -s -G localhost:8000/api/contents \
+  --data-urlencode 'repo=octocat/Hello-World' \
+  --data-urlencode 'path=README' \
+  --data-urlencode 'ref=master'
+```
+
+Both targets are long-lived public repositories, so this check works for anyone
+with a token, whatever their access. Note that a search run against **your** own
+token also returns private repositories you can see (`docs/research/tests.md`
+shows one), which is why #8 dedupes on `sha` and drops private hits.
 
 ## LLM tag service (#7)
 
