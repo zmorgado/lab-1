@@ -3,6 +3,7 @@ import subprocess
 import pytest
 
 from code_search_proxy.config import (
+    DEFAULT_GEMINI_MODEL,
     GH_TIMEOUT_SECONDS,
     MissingCredentialError,
     Settings,
@@ -46,6 +47,40 @@ def test_github_api_url_can_be_overridden() -> None:
     )
 
     assert settings.github_api_url == "https://ghe.example.com/api/v3"
+
+
+def test_the_gemini_key_is_optional() -> None:
+    # #1: el LLM es un complemento, sin key el back arranca igual
+    settings = load_settings({"GITHUB_TOKEN": "ghp_fake"})
+
+    assert settings.gemini_api_key is None
+    assert settings.gemini_model == DEFAULT_GEMINI_MODEL
+
+
+def test_a_blank_gemini_key_counts_as_not_configured() -> None:
+    # Un .env con 'GEMINI_API_KEY=' define la variable pero no aporta key
+    settings = load_settings({"GITHUB_TOKEN": "ghp_fake", "GEMINI_API_KEY": "  "})
+
+    assert settings.gemini_api_key is None
+
+
+def test_the_gemini_settings_can_be_overridden() -> None:
+    settings = load_settings(
+        {
+            "GITHUB_TOKEN": "ghp_fake",
+            "GEMINI_API_KEY": "from-env",
+            "GEMINI_MODEL": "gemini-3-pro-preview",
+        }
+    )
+
+    assert settings.gemini_api_key == "from-env"
+    assert settings.gemini_model == "gemini-3-pro-preview"
+
+
+def test_settings_do_not_leak_the_gemini_key_in_their_repr() -> None:
+    settings = Settings(github_token="ghp_fake", gemini_api_key="super-secret")
+
+    assert "super-secret" not in repr(settings)
 
 
 def test_settings_do_not_leak_the_token_in_their_repr() -> None:

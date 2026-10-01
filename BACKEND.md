@@ -144,6 +144,54 @@ It prints the similarity and a time/memory report. On an interpreter with the
 `.pth` quirk above, `No module named 'services'` is fixed the same way, with
 `PYTHONPATH=.` instead of `PYTHONPATH=src`.
 
+## LLM tag service (#7)
+
+Stage 2: `POST /api/tags` takes a pasted snippet and returns the detected
+language plus the five tag categories from `docs/research/solution-schematics-v2.md`
+— `api_calls`, `data_structures`, `paradigm`, `algorithm`, `domain_keywords`. It
+lives in `llm_tags.py` (client, prompt, `TagSet`, `LlmTagError`), `tags_api.py`
+(dependency, request/response models, error handler) and the route in `app.py`. It complements the grep service (#4): grep pulls what the code says
+literally, the LLM describes what it *is*. Which tags go into a query is #19.
+
+```
+POST /api/tags   {"source": "...", "language": "Python"}   # language optional
+→ {"language": "Python", "tags": {"api_calls": [...], "data_structures": [...], ...}}
+```
+
+**Provider**: Google Gemini (`gemini-2.5-flash`) over plain REST with `httpx`. The
+free tier needs no card, takes a JSON schema for the response and lets thinking be
+switched off. Key at <https://aistudio.google.com/apikey>; limits change, read
+<https://ai.google.dev/gemini-api/docs/rate-limits>. Under the free-tier
+[terms](https://ai.google.dev/gemini-api/terms) Google may use the content sent to
+improve its products: fine for public code pasted into a search engine, not for
+anything private.
+
+**Configuration**, read like the GitHub token (environment, then `backend/.env`):
+
+```
+GEMINI_API_KEY=          # optional
+GEMINI_MODEL=...         # optional, defaults to gemini-2.5-flash
+```
+
+The key is optional: the LLM is a complement (#1), so without it the service
+starts and `/api/tags` answers `llm_unavailable`.
+
+**Errors** leave as JSON with a stable `code`; the provider's text travels in
+`message` and may change.
+
+| `code` | HTTP | Meaning |
+| --- | --- | --- |
+| `empty_source` | 422 | Nothing to extract from |
+| `llm_auth` | 502 | Our key was rejected (not 401: it is not the user's credential) |
+| `llm_quota_exhausted` | 429 | Free-tier quota spent; `Retry-After` is forwarded |
+| `llm_unavailable` | 503 | No key, provider down, overloaded or unreachable |
+| `llm_malformed_response` | 502 | The model answered something unparseable |
+| `llm_request_failed` | 502 | Anything else |
+
+Everything but `empty_source` also carries `"fallback": "grep"`, so the client can
+carry on with grep tags alone. Nothing is retried: on failure the client falls
+back to grep, and a 429 forwards `Retry-After`.
+
 ## Tests
 
 `pytest` is the test runner, configured in `pyproject.toml` under

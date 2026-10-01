@@ -17,11 +17,14 @@ from dotenv import dotenv_values
 
 GITHUB_TOKEN_ENV = "GITHUB_TOKEN"
 GITHUB_API_URL_ENV = "GITHUB_API_URL"
+GEMINI_API_KEY_ENV = "GEMINI_API_KEY"
+GEMINI_MODEL_ENV = "GEMINI_MODEL"
 
 # backend/.env, al lado del pyproject. Esta gitignoreado: es para desarrollo local
 DEFAULT_ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
 
 DEFAULT_GITHUB_API_URL = "https://api.github.com"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
 # 'gh' guarda el token en el keyring del sistema, asi que sacarlo cuesta un
 # proceso. Es rapido (~75ms), pero no puede colgar el arranque
@@ -79,6 +82,10 @@ class Settings:
     # repr=False para que el token no aparezca en un traceback ni en un log
     github_token: str = field(repr=False)
     github_api_url: str = DEFAULT_GITHUB_API_URL
+    # Opcional: el LLM es un complemento del grep (#1). Sin key el servicio
+    # arranca igual y /api/tags contesta llm_unavailable (#7)
+    gemini_api_key: str | None = field(default=None, repr=False)
+    gemini_model: str = DEFAULT_GEMINI_MODEL
 
 
 def load_settings(
@@ -110,4 +117,11 @@ def load_settings(
 
     api_url = source.get(GITHUB_API_URL_ENV, "").strip() or DEFAULT_GITHUB_API_URL
 
-    return Settings(github_token=token, github_api_url=api_url.rstrip("/"))
+    return Settings(
+        github_token=token,
+        github_api_url=api_url.rstrip("/"),
+        # Vacio y ausente son lo mismo: un '.env' con 'GEMINI_API_KEY=' no aporta key
+        gemini_api_key=source.get(GEMINI_API_KEY_ENV, "").strip() or None,
+        gemini_model=source.get(GEMINI_MODEL_ENV, "").strip() or DEFAULT_GEMINI_MODEL,
+    )
+
