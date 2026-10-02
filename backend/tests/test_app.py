@@ -10,9 +10,14 @@ from snippet_search.app import create_app
 from conftest import RATE_LIMIT_HEADERS, SEARCH_BODY, SETTINGS
 
 
+def no_model(query: str, snippets: list[str]) -> list[float]:
+    # Ningun test de la app llega a embeber: si pasa, que se note
+    raise AssertionError("the app tests should not reach UniXcoder")
+
+
 @pytest.fixture
 def client():
-    with TestClient(create_app(SETTINGS)) as test_client:
+    with TestClient(create_app(SETTINGS, rank=no_model)) as test_client:
         yield test_client
 
 
@@ -291,7 +296,8 @@ def test_search_returns_the_tags_alongside_githubs_results(client: TestClient) -
 
     response = client.post("/api/search", json={"source": SORT_DICTIONARY})
 
-    # AC de #4: los tags que se mandaron viajan con los resultados
+    # AC de #4: los tags que se mandaron viajan con los resultados. Ninguno de
+    # los dos items llega al AST: uno es privado y el otro no trae 'url' con ref
     assert response.json() == {
         "tags": ["sorted", "items", "sort_dictionary", "lambda"],
         "tiers": {
@@ -300,6 +306,24 @@ def test_search_returns_the_tags_alongside_githubs_results(client: TestClient) -
             "domain": [],
         },
         "query": "sorted items sort_dictionary lambda language:python",
+        # SETTINGS no tiene key de Gemini: la corrida sigue con el grep
+        "llm": {"tags": None, "error": "llm_unavailable"},
+        "snippet": {"category": "function", "fallback": False, "lines": 2},
+        "anchors": ["sorted", "items", "sort_dictionary", "lambda"],
+        "candidates": [],
+        "rejected": {"A": 0, "C": 0, "B": 0, "length": 0, "budget": 0},
+        "skipped": [
+            {
+                "repo": "example-org/public-sample",
+                "path": "app/services/document_ai.py",
+                "reason": "the search result carries no ref to fetch",
+            },
+            {
+                "repo": "example-org/private-sample",
+                "path": "app/services/document_ai.py",
+                "reason": "private repository",
+            },
+        ],
         "results": SEARCH_BODY,
     }
 

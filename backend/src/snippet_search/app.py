@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from .config import Settings, load_settings
 from .github import GitHubClient, GitHubError, RateLimit
 from .llm_tags import GeminiTagService, LlmTagError
-from .pipeline import SearchError, search
+from .pipeline import Ranker, SearchError, search, unixcoder_rank
 from .tags_api import TagsDep, TagsRequest, TagsResponse, handle_llm_tag_error
 
 # 'owner/name', el formato que devuelve search/code en repository.full_name
@@ -64,8 +64,9 @@ class SearchRequest(BaseModel):
     )
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
-    """Arma la app. Recibe Settings ya resueltos para que los tests no toquen el entorno."""
+def create_app(settings: Settings | None = None, rank: Ranker = unixcoder_rank) -> FastAPI:
+    """Arma la app. Recibe Settings ya resueltos para que los tests no toquen el
+    entorno, y el Ranker para que no carguen UniXcoder."""
     resolved = settings if settings is not None else load_settings()
 
     @asynccontextmanager
@@ -135,8 +136,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.post("/api/search")
-    async def run_search(github: GitHubDep, payload: SearchRequest) -> Response:
-        outcome = await search(github, payload.source, payload.language)
+    async def run_search(github: GitHubDep, tags: TagsDep, payload: SearchRequest) -> Response:
+        outcome = await search(
+            github, payload.source, payload.language, llm=tags, rank=rank
+        )
         return JSONResponse(
             content=outcome.as_dict(), headers=_rate_limit_headers(outcome.rate_limit)
         )

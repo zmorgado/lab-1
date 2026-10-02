@@ -11,9 +11,10 @@ see the stack decision on #3 for why it is Python rather than Node/TS:
 - the result mapper the frontend renders (#8) and error codes (#9)
 
 #3 landed the first two endpoints and the app skeleton (FastAPI + uvicorn). #21
-landed the embedding stage as a library, which the app does not call yet. #7
-added the LLM tags, and #4 the grep tags with the general search endpoint.
-Everything else on that list is still to come. Issue #1 is the spec.
+landed the embedding stage as a library. #7 added the LLM tags, and #4 the grep
+tags with the general search endpoint. #20 added the AST stage and wired every
+stage into one run behind `/api/search`. Query building in the backend (#19), the
+result mapper (#8) and error codes (#9) are still to come. Issue #1 is the spec.
 
 ## Layout
 
@@ -93,7 +94,7 @@ Enterprise, or a fake in tests).
 | `GET /health` | `{"status": "ok"}` |
 | `GET /api/search/code?q=&per_page=&page=` | GitHub's `search/code` response **unchanged** |
 | `GET /api/contents?repo=&path=&ref=` | the file's source as `text/plain` |
-| `POST /api/search` | the tags, the query built from them, and GitHub's results (see below) |
+| `POST /api/search` | the full run: tags, query, ranked AST subtrees, and GitHub's results (see below) |
 
 The proxy endpoints are a thin pass-through: they attach the credential and
 forward. They do not build queries or reshape results (#8), and GitHub's error
@@ -142,10 +143,10 @@ them. It lives in `snippet_search/embeddings/`:
 | `embeddings/unixcoder.py` | Microsoft's `UniXcoder` model class, vendored with its MIT header |
 | `embeddings/encoder_only_VE.py` | `verify_code_semantics(query, code_snippets, model=None)`: one cosine score per candidate |
 
-It is a library for now: no endpoint, and nothing in the app calls it. The
-first call downloads `microsoft/unixcoder-base` from Hugging Face; pass a loaded
-`model` to avoid reloading it on every call. `torch`, `transformers` and
-`psutil` are in the dependency list for this stage.
+`/api/search` calls it through `pipeline.unixcoder_rank`, which loads the model
+once per process, on the first search that has something to rank. That first
+call downloads `microsoft/unixcoder-base` from Hugging Face (about 500 MB).
+`torch`, `transformers` and `psutil` are in the dependency list for this stage.
 
 To see a score by hand, compare two files:
 
@@ -163,14 +164,15 @@ with the `.pth` quirk above, prefix it with `PYTHONPATH=src`.
 Endpoints follow the user's steps, not the internal stages. The stages are plain
 modules that don't know each other, and `pipeline.py` chains them, so the route
 stays thin. Every later stage plugs into `pipeline.search()`, not into a new
-endpoint: LLM tags and the user's edited list (#22), filters (#19), AST (#20),
-embeddings (#21) and the ranked result shape (#8).
+endpoint: the user's edited tag list (#22), filters (#19) and the ranked result
+shape (#8).
 
 | Module | Stage |
 | --- | --- |
 | `grep_tags.py` | 1: `extract_tags(snippet)` → `Tiers`, the candidates in three tiers. Python only |
 | `query.py` | 3: `build_query(tags, language)` → `SearchQuery` or `NothingToSearch` |
-| `pipeline.py` | `search(github, source, language)`: extraction → query → `search/code` |
+| `ast_subtrees.py` | 4: `analyze_snippet(snippet)` → `SnippetShape`; `isolate(file, shape, anchors)` → `Isolation` |
+| `pipeline.py` | `search(github, source, language, llm=, rank=)`: the whole run, below |
 
 Tags come in three tiers, APIs (imports and calls), then structures (own
 `def`/`class` names and `lambda`), then a few docstring words. Keywords, generic
@@ -179,11 +181,30 @@ builtins (`print`, `len`, ...), dunders and names under 3 characters are dropped
 on the `q` value, so truncation keeps the highest tiers. It takes any tag list and
 quotes multi-word tags, so #22 can feed it the merged and edited list.
 
+The run: grep tags → query → `search/code` (first `MAX_CANDIDATE_FILES`, 20) →
+each file through `/repos/{repo}/contents/{path}` at the commit the search
+returned → AST → UniXcoder over at most `MAX_EMBEDDED_SUBTREES` (50, #18's
+ceiling) → sorted by cosine. The LLM (#7) runs alongside the search. Its tags
+only widen the AST anchors, because merging them into the query is #22's. If it
+fails, its `code` is reported and the run goes on with grep alone.
+
 ```
 POST /api/search   {"source": "...", "language": "python"}   # language optional
 → {"tags": [...], "tiers": {"apis": [...], "structures": [...], "domain": [...]},
-   "query": "... language:python", "results": <search/code body, unchanged>}
+   "query": "... language:python",
+   "llm": {"tags": {...} | null, "error": "llm_unavailable" | null},
+   "snippet": {"category": "function", "fallback": false, "lines": 4},
+   "anchors": [...],
+   "candidates": [{"repo", "path", "sha", "html_url", "score",
+                   "code", "kind", "name", "parent", "start_line", "end_line", "anchors"}],
+   "rejected": {"A": 0, "C": 0, "B": 0, "length": 0, "budget": 0},
+   "skipped": [{"repo", "path", "reason"}],
+   "results": <search/code body, unchanged>}
 ```
+
+The shape is raw on purpose: #8 turns `candidates` into the result list (dedupe
+on `sha`, result ceiling). Private hits are never fetched; they show up in
+`skipped`.
 
 Both errors are 422s with a stable `code`, as in #7, and neither reaches GitHub:
 `nothing_to_search` (no usable tags) and `unsupported_language`. Filters (owner,
@@ -195,6 +216,57 @@ Verify it end to end against the real API, with the server running:
 jq -Rs '{source: .}' some_snippet.py | curl -s -X POST localhost:8000/api/search \
   -H 'Content-Type: application/json' -d @- | jq '{tags, query, total: .results.total_count}'
 ```
+
+## AST stage (#20)
+
+`ast_subtrees.py` parses with tree-sitter (`tree-sitter-python`) and cuts each
+candidate file down to the subtrees worth embedding.
+
+**The snippet** is dedented and parsed. Its first top-level `def` or `class`
+sets the category, `function` or `class`. Loose statements fall back to
+`function` with `fallback: true`, since that code would live inside some
+function in a candidate.
+
+**Each candidate file** goes through the criteria of
+`docs/research/multiple-snippet-sorting-solution.md`, cheapest first. Each one
+counts what it drops in `rejected`:
+
+| Criterion | Keeps |
+| --- | --- |
+| A | Top-level functions and methods of top-level classes (or top-level classes, for a class snippet). Nested definitions are dropped |
+| C | Subtrees with a name, parameters and a body that does something. Stubs whose body is only a docstring, `pass`, `...` or `raise NotImplementedError` are dropped |
+| B | Subtrees containing at least one anchor |
+| length | Between `MIN_LENGTH_RATIO` (0.25) and `MAX_LENGTH_RATIO` (4.0) times the snippet's non-blank lines |
+
+**Anchors** are the grep `apis` and `structures` tiers plus every LLM tag. A tag
+matches when all its words appear in the subtree. The subtree's words come from
+its identifiers (split on `snake_case` and `camelCase`), its comments, its
+docstring and the constructs it uses (`lambda`, `comprehension`, `generator`,
+`async`, `decorator`, and `recursion` for a self-call). That last part is what
+lets a conceptual tag like `binary search` or `generator` match.
+
+**Output**, one `Subtree` per survivor, the input for #21:
+
+| Field | |
+| --- | --- |
+| `code` | the subtree's source, dedented, decorators excluded. This is what gets embedded |
+| `kind`, `name` | `function_definition` / `class_definition`, and its name |
+| `parent` | the enclosing class for a method, else `null` |
+| `start_line`, `end_line` | 1-based, inclusive, in the original file |
+| `anchors` | the tags criterion B found in it |
+
+A file that survives nothing gives an empty set. A file with syntax errors is
+skipped whole, with `syntax error at line N` as the reason. tree-sitter never
+raises, so its error nodes are the signal. GitHub indexes Jinja-templated `.py`
+files that fail exactly like this. Note that tree-sitter's grammar still accepts
+most Python 2 (`print "x"`, `except E, e:`).
+
+`tree-sitter` is pinned below 0.26: 0.26.0 corrupts memory while walking large
+trees and segfaults on the standard library's `textwrap.py`.
+
+The tests run on real files in `tests/fixtures/` (CPython's `bisect`,
+`textwrap` and `numbers`, and a cookiecutter-django template). The README there
+says where each one comes from.
 
 ## LLM tag service (#7)
 

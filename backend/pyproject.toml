@@ -11,6 +11,10 @@ dependencies = [
     "httpx>=0.28.1",
     "python-dotenv>=1.2.3",
     "uvicorn[standard]>=0.53.0",
+    # 0.26.0 corrompe memoria al recorrer arboles grandes (segfault con
+    # textwrap.py de la stdlib); 0.25.2 los recorre bien
+    "tree-sitter>=0.25.2,<0.26",
+    "tree-sitter-python>=0.25.0",
 ]
 
 # 'uv run snippet-search' levanta el servicio sin tener que recordar el

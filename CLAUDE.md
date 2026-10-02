@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `main` carries everything: the design sources plus the code, since `feature/initial-frontend` was merged in PR #16. Two codebases sit side by side, with separate toolchains:
 
 - **`frontend/`** — the React + TypeScript + Vite frontend (`src/`, `package.json`, pnpm).
-- **`backend/`** — the Python service (`pyproject.toml`, uv). It will hold the whole pipeline: proxy, tag extraction, AST stage and embeddings. So far, in `src/snippet_search/`: the proxy from #3, the LLM tags from #7, the grep tags, query building and pipeline from #4, and the UniXcoder embedding stage from #21 in `embeddings/`, a library the app doesn't call yet. AST is still to come.
+- **`backend/`** — the Python service (`pyproject.toml`, uv). It will hold the whole pipeline: proxy, tag extraction, AST stage and embeddings. So far, in `src/snippet_search/`: the proxy from #3, the LLM tags from #7, the grep tags, query building and pipeline from #4, the UniXcoder embedding stage from #21 in `embeddings/`, and the AST stage from #20 in `ast_subtrees.py`, which also wired every stage into one run behind `POST /api/search`.
 - **`docs/research/`** — the design sources: `solution-schematics-v2.md`, `multiple-snippet-sorting-solution.md`, `unixcoder-verificacion.md`, the reference PDFs, `discussion.txt`, `tests.md` and the `generacion-de-tags-query.py` sketch. Committed sources, not generated output — cite them rather than re-deriving.
 - **`docs/diagrams/`** — the architecture diagram (`lab-1.architecture.html`, generated from `lab-1.architecture.json`).
 - **`docs/agents/`** — how agent skills should use this repo's tracker, labels and domain docs.
