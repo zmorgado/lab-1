@@ -4,7 +4,7 @@ import httpx
 import pytest
 import respx
 
-from code_search_proxy.github import GitHubClient, GitHubError, RateLimit
+from snippet_search.github import GitHubClient, GitHubError, RateLimit
 
 from conftest import RATE_LIMIT_HEADERS, SEARCH_BODY, SETTINGS
 

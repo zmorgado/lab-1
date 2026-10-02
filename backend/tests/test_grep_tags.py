@@ -1,4 +1,4 @@
-from code_search_proxy.grep_tags import Tiers, extract_tags
+from snippet_search.grep_tags import Tiers, extract_tags
 
 RANK_BY_VALUE = '''
 from operator import itemgetter

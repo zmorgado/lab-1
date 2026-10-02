@@ -7,22 +7,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `main` carries everything: the design sources plus the code, since `feature/initial-frontend` was merged in PR #16. Two codebases sit side by side, with separate toolchains:
 
 - **`frontend/`** — the React + TypeScript + Vite frontend (`src/`, `package.json`, pnpm).
-- **`backend/`** — the Python service (`pyproject.toml`, uv). It will hold the whole pipeline: proxy, tag extraction, AST stage and embeddings. So far, in `src/code_search_proxy/`: the proxy from #3, the LLM tags from #7, and the grep tags, query building and pipeline from #4. The UniXcoder embedding stage from #21 sits in `backend/services/`, a library the app doesn't call yet. AST is still to come.
+- **`backend/`** — the Python service (`pyproject.toml`, uv). It will hold the whole pipeline: proxy, tag extraction, AST stage and embeddings. So far, in `src/snippet_search/`: the proxy from #3, the LLM tags from #7, the grep tags, query building and pipeline from #4, and the UniXcoder embedding stage from #21 in `embeddings/`, a library the app doesn't call yet. AST is still to come.
 - **`docs/research/`** — the design sources: `solution-schematics-v2.md`, `multiple-snippet-sorting-solution.md`, `unixcoder-verificacion.md`, the reference PDFs, `discussion.txt`, `tests.md` and the `generacion-de-tags-query.py` sketch. Committed sources, not generated output — cite them rather than re-deriving.
 - **`docs/diagrams/`** — the architecture diagram (`lab-1.architecture.html`, generated from `lab-1.architecture.json`).
 - **`docs/agents/`** — how agent skills should use this repo's tracker, labels and domain docs.
 
 `origin/feature/initial-frontend` still exists but is behind `main`; work from `main`.
 
-### Decided restructure, backend half not done yet
+### Where backend code goes
 
-Frontend and backend grew into the same repo without a plan, so the layout is getting reshuffled. The frontend half is done: it moved out of the root into **`frontend/`**, so the root only holds `docs/`, `backend/`, `frontend/`, the agent files and `.gitignore`. Decided, still to be done, after #27 merges:
+The layout was settled in #30, after frontend and backend grew into one repo without a plan. The package is **`snippet_search`**, because it holds the whole pipeline, not just the proxy:
 
-- The Python package **`code_search_proxy` is renamed `snippet_search`**, since it holds the whole pipeline and not just the proxy.
-- **`backend/services/` moves into the package.** Stages are flat modules (`github.py`, `llm_tags.py`, ...), and a stage gets a subpackage only when it has several files. The embeddings stage does: the vendored `unixcoder.py` plus the ranking.
-- **`backend/tests/` keeps only pytest.** The manual UniXcoder runner and its inputs move to `backend/scripts/`.
-
-Until that lands, don't add new top-level folders or packages. New backend code goes flat into `src/code_search_proxy/`.
+- **A stage is a flat module** in `src/snippet_search/` (`github.py`, `llm_tags.py`, ...). It gets a subpackage only when it spans several files, as `embeddings/` does: the vendored `unixcoder.py` plus the scoring.
+- **`backend/tests/` is pytest only.** Manual runners and their inputs go in `backend/scripts/`, like the UniXcoder `tester.py`.
+- **New code goes into the package**, not into a new top-level folder or a second package.
 
 Source comments are written in Spanish, prose/UI strings in English. Follow suit; keep identifiers English. Issues are written in English too.
 
@@ -64,7 +62,7 @@ Backend, from `backend/`. Package manager and task runner is **uv** (`backend/uv
 
 ```
 uv sync
-uv run code-search-proxy   # the service on 127.0.0.1:8000; needs a GitHub token (BACKEND.md)
+uv run snippet-search   # the service on 127.0.0.1:8000; needs a GitHub token (BACKEND.md)
 uv run pytest
 ```
 
