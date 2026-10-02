@@ -12,7 +12,8 @@ see the stack decision on #3 for why it is Python rather than Node/TS:
 
 #3 landed the first two endpoints and the app skeleton (FastAPI + uvicorn). #21
 landed the embedding stage as a library in `services/`, which the app does not
-call yet. Everything else on that list is still to come. Issue #1 is the spec.
+call yet. #7 added the LLM tags, and #4 the grep tags with the general search
+endpoint. Everything else on that list is still to come. Issue #1 is the spec.
 
 The layout is about to change: `services/` moves into the package, which is
 renamed `snippet_search`. The frontend already moved to `frontend/`. See
@@ -81,10 +82,12 @@ Enterprise, or a fake in tests).
 | `GET /health` | `{"status": "ok"}` |
 | `GET /api/search/code?q=&per_page=&page=` | GitHub's `search/code` response **unchanged** |
 | `GET /api/contents?repo=&path=&ref=` | the file's source as `text/plain` |
+| `POST /api/search` | the tags, the query built from them, and GitHub's results (see below) |
 
-The proxy is a thin pass-through: it attaches the credential and forwards. It
-does not build queries (#19) or reshape results (#8), and GitHub's error status
-and body are relayed as-is for #9 to map to stable error codes.
+The proxy endpoints are a thin pass-through: they attach the credential and
+forward. They do not build queries or reshape results (#8), and GitHub's error
+status and body are relayed as-is for #9 to map to stable error codes. Only
+`/api/search` builds a query.
 
 `/api/contents` base64-decodes GitHub's envelope and returns just the source,
 which is what the AST stage (#20) needs; `search/code` gives back repo, path and
@@ -143,6 +146,44 @@ uv run python tests/tester.py tests/word_freq_A.py tests/word_freq_B.py
 It prints the similarity and a time/memory report. On an interpreter with the
 `.pth` quirk above, `No module named 'services'` is fixed the same way, with
 `PYTHONPATH=.` instead of `PYTHONPATH=src`.
+
+## The search pipeline (#4)
+
+Endpoints follow the user's steps, not the internal stages. The stages are plain
+modules that don't know each other, and `pipeline.py` chains them, so the route
+stays thin. Every later stage plugs into `pipeline.search()`, not into a new
+endpoint: LLM tags and the user's edited list (#22), filters (#19), AST (#20),
+embeddings (#21) and the ranked result shape (#8).
+
+| Module | Stage |
+| --- | --- |
+| `grep_tags.py` | 1: `extract_tags(snippet)` → `Tiers`, the candidates in three tiers. Python only |
+| `query.py` | 3: `build_query(tags, language)` → `SearchQuery` or `NothingToSearch` |
+| `pipeline.py` | `search(github, source, language)`: extraction → query → `search/code` |
+
+Tags come in three tiers, APIs (imports and calls), then structures (own
+`def`/`class` names and `lambda`), then a few docstring words. Keywords, generic
+builtins (`print`, `len`, ...), dunders and names under 3 characters are dropped.
+`build_query` fills the query in the order given, up to 6 tags and 256 characters
+on the `q` value, so truncation keeps the highest tiers. It takes any tag list and
+quotes multi-word tags, so #22 can feed it the merged and edited list.
+
+```
+POST /api/search   {"source": "...", "language": "python"}   # language optional
+→ {"tags": [...], "tiers": {"apis": [...], "structures": [...], "domain": [...]},
+   "query": "... language:python", "results": <search/code body, unchanged>}
+```
+
+Both errors are 422s with a stable `code`, as in #7, and neither reaches GitHub:
+`nothing_to_search` (no usable tags) and `unsupported_language`. Filters (owner,
+repo, languages) and the frontend wiring are #19's.
+
+Verify it end to end against the real API, with the server running:
+
+```
+jq -Rs '{source: .}' some_snippet.py | curl -s -X POST localhost:8000/api/search \
+  -H 'Content-Type: application/json' -d @- | jq '{tags, query, total: .results.total_count}'
+```
 
 ## LLM tag service (#7)
 

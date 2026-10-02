@@ -261,3 +261,70 @@ def test_retry_after_is_forwarded_on_a_secondary_rate_limit(client: TestClient) 
 
     assert response.status_code == 403
     assert response.headers["retry-after"] == "60"
+
+
+SORT_DICTIONARY = (
+    "def sort_dictionary(d):\n"
+    "    return dict(sorted(d.items(), key=lambda item: item[1]))\n"
+)
+
+
+@respx.mock
+def test_search_sends_the_reduced_query_to_search_code(client: TestClient) -> None:
+    route = respx.get("https://api.github.com/search/code").mock(
+        return_value=httpx.Response(200, json=SEARCH_BODY)
+    )
+
+    client.post("/api/search", json={"source": SORT_DICTIONARY})
+
+    assert (
+        route.calls.last.request.url.params["q"]
+        == "sorted items sort_dictionary lambda language:python"
+    )
+
+
+@respx.mock
+def test_search_returns_the_tags_alongside_githubs_results(client: TestClient) -> None:
+    respx.get("https://api.github.com/search/code").mock(
+        return_value=httpx.Response(200, json=SEARCH_BODY)
+    )
+
+    response = client.post("/api/search", json={"source": SORT_DICTIONARY})
+
+    # AC de #4: los tags que se mandaron viajan con los resultados
+    assert response.json() == {
+        "tags": ["sorted", "items", "sort_dictionary", "lambda"],
+        "tiers": {
+            "apis": ["sorted", "items"],
+            "structures": ["sort_dictionary", "lambda"],
+            "domain": [],
+        },
+        "query": "sorted items sort_dictionary lambda language:python",
+        "results": SEARCH_BODY,
+    }
+
+
+@respx.mock
+def test_a_snippet_with_nothing_distinctive_is_reported_not_searched(
+    client: TestClient,
+) -> None:
+    route = respx.get("https://api.github.com/search/code").mock(
+        return_value=httpx.Response(200, json=SEARCH_BODY)
+    )
+
+    response = client.post("/api/search", json={"source": "x = 1\nprint(x)\n"})
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "nothing_to_search"
+    # AC de #4: se informa, no se busca
+    assert not route.called
+
+
+@respx.mock
+def test_a_language_other_than_python_is_rejected(client: TestClient) -> None:
+    response = client.post(
+        "/api/search", json={"source": SORT_DICTIONARY, "language": "Go"}
+    )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "unsupported_language"

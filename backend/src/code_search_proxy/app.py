@@ -1,9 +1,12 @@
 """Aplicacion FastAPI del proxy (#3).
 
-Es un pass-through fino: recibe una query ya armada, le pega la credencial y
-devuelve lo que contesto GitHub. No arma queries (eso es #19) ni reformatea
-resultados (eso es #8). Lo unico que agrega son los headers de rate limit, que
+Los endpoints del proxy son un pass-through fino: reciben una query ya armada,
+le pegan la credencial y devuelven lo que contesto GitHub, sin reformatear
+resultados (eso es #8). Lo unico que agregan son los headers de rate limit, que
 son la unica senal de cuanto queda del presupuesto compartido.
+
+/api/search es el endpoint general: recibe el snippet y le pasa el trabajo al
+pipeline (pipeline.py), que encadena las etapas. Las etapas no son endpoints.
 
 Tambien expone el servicio de tags por LLM (#7), que no tiene nada que ver con
 GitHub: recibe un snippet y devuelve las cinco categorias de tags.
@@ -18,10 +21,12 @@ from typing import Annotated, Any, AsyncIterator
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
+from pydantic import BaseModel, Field
 
 from .config import Settings, load_settings
 from .github import GitHubClient, GitHubError, RateLimit
 from .llm_tags import GeminiTagService, LlmTagError
+from .pipeline import SearchError, search
 from .tags_api import TagsDep, TagsRequest, TagsResponse, handle_llm_tag_error
 
 # 'owner/name', el formato que devuelve search/code en repository.full_name
@@ -50,6 +55,13 @@ def github_client(request: Request) -> GitHubClient:
 # globals del modulo. Una funcion anidada no esta ahi, asi que el parametro
 # terminaria tratado como query param en vez de como dependencia.
 GitHubDep = Annotated[GitHubClient, Depends(github_client)]
+
+
+class SearchRequest(BaseModel):
+    source: str = Field(description="The pasted snippet, as text")
+    language: str = Field(
+        default="python", description="Only Python for now; case-insensitive"
+    )
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -99,6 +111,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.add_exception_handler(LlmTagError, handle_llm_tag_error)
 
+    @app.exception_handler(SearchError)
+    async def handle_search_error(_: Request, error: SearchError) -> Response:
+        return JSONResponse(status_code=error.status_code, content=error.body)
+
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
@@ -116,6 +132,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         result = await github.search_code(q=q, per_page=per_page, page=page)
         return JSONResponse(
             content=result.body, headers=_rate_limit_headers(result.rate_limit)
+        )
+
+    @app.post("/api/search")
+    async def run_search(github: GitHubDep, payload: SearchRequest) -> Response:
+        outcome = await search(github, payload.source, payload.language)
+        return JSONResponse(
+            content=outcome.as_dict(), headers=_rate_limit_headers(outcome.rate_limit)
         )
 
     @app.post("/api/tags")
