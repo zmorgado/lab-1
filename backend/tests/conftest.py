@@ -5,8 +5,8 @@ Asegura que 'src/' este en sys.path antes de importar el paquete.
 El paquete se instala editable (src layout), pero eso no alcanza: algunos builds
 de python.org (3.12.8 aca) saltean los .pth cuyo nombre arranca con '_'
 ("Skipping hidden .pth file"), y el editable se instala justamente como
-'_editable_impl_code_search_proxy.pth' con la ruta a src/ adentro. Queda
-ignorado y el import de code_search_proxy falla aunque el archivo este bien.
+'_editable_impl_snippet_search.pth' con la ruta a src/ adentro. Queda
+ignorado y el import de snippet_search falla aunque el archivo este bien.
 
 Asegurar la ruta aca hace que la suite no dependa de ese detalle del
 interprete. Ver BACKEND.md.
@@ -22,7 +22,7 @@ SRC = Path(__file__).resolve().parent.parent / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from code_search_proxy.config import Settings  # noqa: E402
+from snippet_search.config import Settings  # noqa: E402
 
 SETTINGS = Settings(github_token="ghp_fake", github_api_url="https://api.github.com")
 
@@ -74,6 +74,6 @@ def isolate_from_local_credentials(monkeypatch, tmp_path):
     Un test que quiera el fallback de 'gh' pisa read_gh_cli_token el mismo.
     """
     monkeypatch.setattr(
-        "code_search_proxy.config.DEFAULT_ENV_FILE", tmp_path / "nonexistent.env"
+        "snippet_search.config.DEFAULT_ENV_FILE", tmp_path / "nonexistent.env"
     )
-    monkeypatch.setattr("code_search_proxy.config.read_gh_cli_token", lambda: None)
+    monkeypatch.setattr("snippet_search.config.read_gh_cli_token", lambda: None)

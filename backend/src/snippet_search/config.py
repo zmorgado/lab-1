@@ -24,7 +24,7 @@ GEMINI_MODEL_ENV = "GEMINI_MODEL"
 DEFAULT_ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
 
 DEFAULT_GITHUB_API_URL = "https://api.github.com"
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 
 # 'gh' guarda el token en el keyring del sistema, asi que sacarlo cuesta un
 # proceso. Es rapido (~75ms), pero no puede colgar el arranque

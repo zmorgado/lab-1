@@ -11,12 +11,25 @@ see the stack decision on #3 for why it is Python rather than Node/TS:
 - the result mapper the frontend renders (#8) and error codes (#9)
 
 #3 landed the first two endpoints and the app skeleton (FastAPI + uvicorn). #21
-landed the embedding stage as a library in `services/`, which the app does not
-call yet. Everything else on that list is still to come. Issue #1 is the spec.
+landed the embedding stage as a library. #7 added the LLM tags, and #4 the grep
+tags with the general search endpoint. #20 added the AST stage and wired every
+stage into one run behind `/api/search`. Query building in the backend (#19), the
+result mapper (#8) and error codes (#9) are still to come. Issue #1 is the spec.
 
-The layout is about to change: `services/` moves into the package, which is
-renamed `snippet_search`. The frontend already moved to `frontend/`. See
-*Decided restructure* in `CLAUDE.md`.
+## Layout
+
+```
+backend/
+  src/snippet_search/   the package: the app and every pipeline stage
+    embeddings/         the one stage with a subpackage of its own
+  tests/                pytest only
+  scripts/              manual runners, never collected by pytest
+```
+
+Each stage is a flat module (`github.py`, `grep_tags.py`, `llm_tags.py`, ...)
+and `pipeline.py` chains them. A stage gets a subpackage only when it spans
+several files, as embeddings does. New stages go into the package, not into a
+new top-level folder (#30).
 
 ## Commands
 
@@ -27,22 +40,22 @@ lockfile resolves the same way for everyone.
 
 ```
 uv sync                 # install deps into backend/.venv
-uv run code-search-proxy   # start the service on 127.0.0.1:8000
+uv run snippet-search   # start the service on 127.0.0.1:8000
 uv run pytest           # run the test suite — exits non-zero on failure
 ```
 
 `HOST` and `PORT` override the bind address. For auto-reload while developing,
-use uvicorn directly: `uv run uvicorn code_search_proxy.main:app --reload`.
+use uvicorn directly: `uv run uvicorn snippet_search.main:app --reload`.
 
 **If either command dies with `ModuleNotFoundError: No module named
-'code_search_proxy'`, prefix it with `PYTHONPATH=src`.** Some python.org builds
+'snippet_search'`, prefix it with `PYTHONPATH=src`.** Some python.org builds
 (3.12.8 here) skip `.pth` files whose name begins with `_`, and the editable
-install is exactly `_editable_impl_code_search_proxy.pth` with `src/` inside it,
+install is exactly `_editable_impl_snippet_search.pth` with `src/` inside it,
 so the package never reaches `sys.path`. It is an interpreter quirk, not a
 project misconfiguration, and `uv sync` regenerates the same file each time:
 
 ```
-PYTHONPATH=src uv run uvicorn code_search_proxy.main:app --port 8000
+PYTHONPATH=src uv run uvicorn snippet_search.main:app --port 8000
 ```
 
 `uv run pytest` is unaffected — `tests/conftest.py` sets the path itself.
@@ -81,10 +94,12 @@ Enterprise, or a fake in tests).
 | `GET /health` | `{"status": "ok"}` |
 | `GET /api/search/code?q=&per_page=&page=` | GitHub's `search/code` response **unchanged** |
 | `GET /api/contents?repo=&path=&ref=` | the file's source as `text/plain` |
+| `POST /api/search` | the full run: tags, query, ranked AST subtrees, and GitHub's results (see below) |
 
-The proxy is a thin pass-through: it attaches the credential and forwards. It
-does not build queries (#19) or reshape results (#8), and GitHub's error status
-and body are relayed as-is for #9 to map to stable error codes.
+The proxy endpoints are a thin pass-through: they attach the credential and
+forward. They do not build queries or reshape results (#8), and GitHub's error
+status and body are relayed as-is for #9 to map to stable error codes. Only
+`/api/search` builds a query.
 
 `/api/contents` base64-decodes GitHub's envelope and returns just the source,
 which is what the AST stage (#20) needs; `search/code` gives back repo, path and
@@ -102,7 +117,7 @@ Verify it end to end against the real API:
 
 ```
 export GITHUB_TOKEN=$(gh auth token)
-uv run code-search-proxy &
+uv run snippet-search &
 
 curl -sD - -G localhost:8000/api/search/code \
   --data-urlencode 'q="def get_adapter" repo:psf/requests language:python'
@@ -121,28 +136,137 @@ shows one), which is why #8 dedupes on `sha` and drops private hits.
 ## Embedding stage (#21)
 
 UniXcoder embeds the snippet and the candidates, and cosine similarity scores
-them. It lives in `services/`, a second top-level package next to
-`code_search_proxy` (both listed under `packages` in `pyproject.toml`):
+them. It lives in `snippet_search/embeddings/`:
 
 | File | What it holds |
 | --- | --- |
-| `services/unixcoder.py` | Microsoft's `UniXcoder` model class, vendored with its MIT header |
-| `services/encoder_only_VE.py` | `verify_code_semantics(query, code_snippets, model=None)`: one cosine score per candidate |
+| `embeddings/unixcoder.py` | Microsoft's `UniXcoder` model class, vendored with its MIT header |
+| `embeddings/encoder_only_VE.py` | `verify_code_semantics(query, code_snippets, model=None)`: one cosine score per candidate |
 
-It is a library for now: no endpoint, and nothing in the app calls it. The
-first call downloads `microsoft/unixcoder-base` from Hugging Face; pass a loaded
-`model` to avoid reloading it on every call. `torch`, `transformers` and
-`psutil` are in the dependency list for this stage.
+`/api/search` calls it through `pipeline.unixcoder_rank`, which loads the model
+once per process, on the first search that has something to rank. That first
+call downloads `microsoft/unixcoder-base` from Hugging Face (about 500 MB).
+`torch`, `transformers` and `psutil` are in the dependency list for this stage.
 
 To see a score by hand, compare two files:
 
 ```
-uv run python tests/tester.py tests/word_freq_A.py tests/word_freq_B.py
+uv run python scripts/tester.py scripts/word_freq_A.py scripts/word_freq_B.py
 ```
 
-It prints the similarity and a time/memory report. On an interpreter with the
-`.pth` quirk above, `No module named 'services'` is fixed the same way, with
-`PYTHONPATH=.` instead of `PYTHONPATH=src`.
+It prints the similarity and a time/memory report. The runner and its inputs
+(`word_freq_A.py`, `word_freq_B.py`, `testing_snippets.txt`) live in `scripts/`,
+outside the suite, so `uv run pytest` never loads the model. On an interpreter
+with the `.pth` quirk above, prefix it with `PYTHONPATH=src`.
+
+## The search pipeline (#4)
+
+Endpoints follow the user's steps, not the internal stages. The stages are plain
+modules that don't know each other, and `pipeline.py` chains them, so the route
+stays thin. Every later stage plugs into `pipeline.search()`, not into a new
+endpoint: the user's edited tag list (#22), filters (#19) and the ranked result
+shape (#8).
+
+| Module | Stage |
+| --- | --- |
+| `grep_tags.py` | 1: `extract_tags(snippet)` → `Tiers`, the candidates in three tiers. Python only |
+| `query.py` | 3: `build_query(tags, language)` → `SearchQuery` or `NothingToSearch` |
+| `ast_subtrees.py` | 4: `analyze_snippet(snippet)` → `SnippetShape`; `isolate(file, shape, anchors)` → `Isolation` |
+| `pipeline.py` | `search(github, source, language, llm=, rank=)`: the whole run, below |
+
+Tags come in three tiers, APIs (imports and calls), then structures (own
+`def`/`class` names and `lambda`), then a few docstring words. Keywords, generic
+builtins (`print`, `len`, ...), dunders and names under 3 characters are dropped.
+`build_query` fills the query in the order given, up to 6 tags and 256 characters
+on the `q` value, so truncation keeps the highest tiers. It takes any tag list and
+quotes multi-word tags, so #22 can feed it the merged and edited list.
+
+The run: grep tags → query → `search/code` (first `MAX_CANDIDATE_FILES`, 20) →
+each file through `/repos/{repo}/contents/{path}` at the commit the search
+returned → AST → UniXcoder over at most `MAX_EMBEDDED_SUBTREES` (50, #18's
+ceiling) → sorted by cosine. The LLM (#7) runs alongside the search. Its tags
+only widen the AST anchors, because merging them into the query is #22's. If it
+fails, its `code` is reported and the run goes on with grep alone.
+
+```
+POST /api/search   {"source": "...", "language": "python"}   # language optional
+→ {"tags": [...], "tiers": {"apis": [...], "structures": [...], "domain": [...]},
+   "query": "... language:python",
+   "llm": {"tags": {...} | null, "error": "llm_unavailable" | null},
+   "snippet": {"category": "function", "fallback": false, "lines": 4},
+   "anchors": [...],
+   "candidates": [{"repo", "path", "sha", "html_url", "score",
+                   "code", "kind", "name", "parent", "start_line", "end_line", "anchors"}],
+   "rejected": {"A": 0, "C": 0, "B": 0, "length": 0, "budget": 0},
+   "skipped": [{"repo", "path", "reason"}],
+   "results": <search/code body, unchanged>}
+```
+
+The shape is raw on purpose: #8 turns `candidates` into the result list (dedupe
+on `sha`, result ceiling). Private hits are never fetched; they show up in
+`skipped`.
+
+Both errors are 422s with a stable `code`, as in #7, and neither reaches GitHub:
+`nothing_to_search` (no usable tags) and `unsupported_language`. Filters (owner,
+repo, languages) and the frontend wiring are #19's.
+
+Verify it end to end against the real API, with the server running:
+
+```
+jq -Rs '{source: .}' some_snippet.py | curl -s -X POST localhost:8000/api/search \
+  -H 'Content-Type: application/json' -d @- | jq '{tags, query, total: .results.total_count}'
+```
+
+## AST stage (#20)
+
+`ast_subtrees.py` parses with tree-sitter (`tree-sitter-python`) and cuts each
+candidate file down to the subtrees worth embedding.
+
+**The snippet** is dedented and parsed. Its first top-level `def` or `class`
+sets the category, `function` or `class`. Loose statements fall back to
+`function` with `fallback: true`, since that code would live inside some
+function in a candidate.
+
+**Each candidate file** goes through the criteria of
+`docs/research/multiple-snippet-sorting-solution.md`, cheapest first. Each one
+counts what it drops in `rejected`:
+
+| Criterion | Keeps |
+| --- | --- |
+| A | Top-level functions and methods of top-level classes (or top-level classes, for a class snippet). Nested definitions are dropped |
+| C | Subtrees with a name, parameters and a body that does something. Stubs whose body is only a docstring, `pass`, `...` or `raise NotImplementedError` are dropped |
+| B | Subtrees containing at least one anchor |
+| length | Between `MIN_LENGTH_RATIO` (0.25) and `MAX_LENGTH_RATIO` (4.0) times the snippet's non-blank lines |
+
+**Anchors** are the grep `apis` and `structures` tiers plus every LLM tag. A tag
+matches when all its words appear in the subtree. The subtree's words come from
+its identifiers (split on `snake_case` and `camelCase`), its comments, its
+docstring and the constructs it uses (`lambda`, `comprehension`, `generator`,
+`async`, `decorator`, and `recursion` for a self-call). That last part is what
+lets a conceptual tag like `binary search` or `generator` match.
+
+**Output**, one `Subtree` per survivor, the input for #21:
+
+| Field | |
+| --- | --- |
+| `code` | the subtree's source, dedented, decorators excluded. This is what gets embedded |
+| `kind`, `name` | `function_definition` / `class_definition`, and its name |
+| `parent` | the enclosing class for a method, else `null` |
+| `start_line`, `end_line` | 1-based, inclusive, in the original file |
+| `anchors` | the tags criterion B found in it |
+
+A file that survives nothing gives an empty set. A file with syntax errors is
+skipped whole, with `syntax error at line N` as the reason. tree-sitter never
+raises, so its error nodes are the signal. GitHub indexes Jinja-templated `.py`
+files that fail exactly like this. Note that tree-sitter's grammar still accepts
+most Python 2 (`print "x"`, `except E, e:`).
+
+`tree-sitter` is pinned below 0.26: 0.26.0 corrupts memory while walking large
+trees and segfaults on the standard library's `textwrap.py`.
+
+The tests run on real files in `tests/fixtures/` (CPython's `bisect`,
+`textwrap` and `numbers`, and a cookiecutter-django template). The README there
+says where each one comes from.
 
 ## LLM tag service (#7)
 
@@ -201,19 +325,14 @@ FastAPI's own docs are written against, so `TestClient` works as documented.
 [`respx`](https://lundberg.github.io/respx/) mocks GitHub at the HTTP layer, so
 **the suite never makes a network call and needs no token**.
 
-The package uses a **src layout** (`src/code_search_proxy/`) and `uv sync`
+The package uses a **src layout** (`src/snippet_search/`) and `uv sync`
 installs it editable. `tests/conftest.py` still puts `src/` on `sys.path`, for the
-`.pth` reason above — without it the suite cannot import `code_search_proxy` at
+`.pth` reason above — without it the suite cannot import `snippet_search` at
 all on an affected interpreter. It also
 holds the shared fixtures and points `DEFAULT_ENV_FILE` at a throwaway path, so
 the suite's result does not depend on whether you happen to have a `.env`. Tests
 live in `backend/tests/`, mirroring the module they cover, not colocated (that
 differs from the frontend, where Vitest tests sit next to the source).
-
-Not everything in `backend/tests/` is a test. `tester.py`, `word_freq_A.py`,
-`word_freq_B.py` and `testing_snippets.txt` are the manual UniXcoder runner and
-its inputs. pytest only collects `test_*.py`, so `uv run pytest` never loads the
-model.
 
 - Run everything: `uv run pytest`
 - Run one file: `uv run pytest tests/test_app.py`
