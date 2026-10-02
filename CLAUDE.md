@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `main` carries everything: the design sources plus the code, since `feature/initial-frontend` was merged in PR #16. Two codebases sit side by side, with separate toolchains:
 
 - **`frontend/`** — the React + TypeScript + Vite frontend (`src/`, `package.json`, pnpm).
-- **`backend/`** — the Python service (`pyproject.toml`, uv). It will hold the whole pipeline: proxy, tag extraction, AST stage and embeddings. So far it has the proxy from #3 (`/health`, `/api/search/code`, `/api/contents`, in `src/code_search_proxy/`) and the UniXcoder embedding stage from #21 (`backend/services/`, a library the app doesn't call yet). Tags, AST and the orchestration are still to come.
+- **`backend/`** — the Python service (`pyproject.toml`, uv). It will hold the whole pipeline: proxy, tag extraction, AST stage and embeddings. So far, in `src/code_search_proxy/`: the proxy from #3, the LLM tags from #7, and the grep tags, query building and pipeline from #4. The UniXcoder embedding stage from #21 sits in `backend/services/`, a library the app doesn't call yet. AST is still to come.
 - **`docs/research/`** — the design sources: `solution-schematics-v2.md`, `multiple-snippet-sorting-solution.md`, `unixcoder-verificacion.md`, the reference PDFs, `discussion.txt`, `tests.md` and the `generacion-de-tags-query.py` sketch. Committed sources, not generated output — cite them rather than re-deriving.
 - **`docs/diagrams/`** — the architecture diagram (`lab-1.architecture.html`, generated from `lab-1.architecture.json`).
 - **`docs/agents/`** — how agent skills should use this repo's tracker, labels and domain docs.
@@ -82,6 +82,8 @@ A GitHub-backed search engine: paste a snippet, get back ranked code on GitHub t
 
 Then results (#8, #23): one ranked, deduplicated list with repo, path, the matching snippet, scores and the query that found it.
 
+**Endpoints follow the user's steps, not the stages.** Each stage is a plain backend module, and `pipeline.py` chains them behind `POST /api/search`. A new stage plugs into `pipeline.search()`; a new endpoint is only for a new user step, like the tag preview #22 needs before searching.
+
 The diagram is `docs/diagrams/lab-1.architecture.html`, generated from the JSON beside it with the `archify` skill.
 
 ### Non-obvious constraints
@@ -112,7 +114,7 @@ There is no `README.md`: #2 renamed the stock Vite template readme to `FRONTEND.
 
 `Search.tsx` drives everything today: `buildQueryString` → client-side guards → `buildSearchQuery` → `searchRepoService.search` → `toSearchResult` → render. Chat state is a `Message` discriminated union (`user` | assistant `loading`/`error`/`done`), and a pending assistant message is swapped in place by id once the request settles — keep that shape when adding states.
 
-**#19 moves the query building and the GitHub call to the backend.** The frontend keeps the chat state and the rendering, and stops knowing GitHub's URL. So treat everything below as a description of current code, not as a design to extend:
+**#19 moves the query building and the GitHub call to the backend.** The backend side already exists: #4 added `POST /api/search`, and #19 adds the filters to it and points the frontend there. The frontend keeps the chat state and the rendering, and stops knowing GitHub's URL. So treat everything below as a description of current code, not as a design to extend:
 
 - **It calls `search/repositories`, not `search/code`.** The pipeline is about code search; this is the wrong endpoint.
 - **The user's pasted message is not in the query yet** — `buildQueryString(_message, filters)` ignores its first argument (explicit `TODO`). Searches are driven purely by the owner/repoName/languages filters.
