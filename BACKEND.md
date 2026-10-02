@@ -11,13 +11,24 @@ see the stack decision on #3 for why it is Python rather than Node/TS:
 - the result mapper the frontend renders (#8) and error codes (#9)
 
 #3 landed the first two endpoints and the app skeleton (FastAPI + uvicorn). #21
-landed the embedding stage as a library in `services/`, which the app does not
-call yet. #7 added the LLM tags, and #4 the grep tags with the general search
-endpoint. Everything else on that list is still to come. Issue #1 is the spec.
+landed the embedding stage as a library, which the app does not call yet. #7
+added the LLM tags, and #4 the grep tags with the general search endpoint.
+Everything else on that list is still to come. Issue #1 is the spec.
 
-The layout is about to change: `services/` moves into the package, which is
-renamed `snippet_search`. The frontend already moved to `frontend/`. See
-*Decided restructure* in `CLAUDE.md`.
+## Layout
+
+```
+backend/
+  src/snippet_search/   the package: the app and every pipeline stage
+    embeddings/         the one stage with a subpackage of its own
+  tests/                pytest only
+  scripts/              manual runners, never collected by pytest
+```
+
+Each stage is a flat module (`github.py`, `grep_tags.py`, `llm_tags.py`, ...)
+and `pipeline.py` chains them. A stage gets a subpackage only when it spans
+several files, as embeddings does. New stages go into the package, not into a
+new top-level folder (#30).
 
 ## Commands
 
@@ -28,22 +39,22 @@ lockfile resolves the same way for everyone.
 
 ```
 uv sync                 # install deps into backend/.venv
-uv run code-search-proxy   # start the service on 127.0.0.1:8000
+uv run snippet-search   # start the service on 127.0.0.1:8000
 uv run pytest           # run the test suite — exits non-zero on failure
 ```
 
 `HOST` and `PORT` override the bind address. For auto-reload while developing,
-use uvicorn directly: `uv run uvicorn code_search_proxy.main:app --reload`.
+use uvicorn directly: `uv run uvicorn snippet_search.main:app --reload`.
 
 **If either command dies with `ModuleNotFoundError: No module named
-'code_search_proxy'`, prefix it with `PYTHONPATH=src`.** Some python.org builds
+'snippet_search'`, prefix it with `PYTHONPATH=src`.** Some python.org builds
 (3.12.8 here) skip `.pth` files whose name begins with `_`, and the editable
-install is exactly `_editable_impl_code_search_proxy.pth` with `src/` inside it,
+install is exactly `_editable_impl_snippet_search.pth` with `src/` inside it,
 so the package never reaches `sys.path`. It is an interpreter quirk, not a
 project misconfiguration, and `uv sync` regenerates the same file each time:
 
 ```
-PYTHONPATH=src uv run uvicorn code_search_proxy.main:app --port 8000
+PYTHONPATH=src uv run uvicorn snippet_search.main:app --port 8000
 ```
 
 `uv run pytest` is unaffected — `tests/conftest.py` sets the path itself.
@@ -105,7 +116,7 @@ Verify it end to end against the real API:
 
 ```
 export GITHUB_TOKEN=$(gh auth token)
-uv run code-search-proxy &
+uv run snippet-search &
 
 curl -sD - -G localhost:8000/api/search/code \
   --data-urlencode 'q="def get_adapter" repo:psf/requests language:python'
@@ -124,13 +135,12 @@ shows one), which is why #8 dedupes on `sha` and drops private hits.
 ## Embedding stage (#21)
 
 UniXcoder embeds the snippet and the candidates, and cosine similarity scores
-them. It lives in `services/`, a second top-level package next to
-`code_search_proxy` (both listed under `packages` in `pyproject.toml`):
+them. It lives in `snippet_search/embeddings/`:
 
 | File | What it holds |
 | --- | --- |
-| `services/unixcoder.py` | Microsoft's `UniXcoder` model class, vendored with its MIT header |
-| `services/encoder_only_VE.py` | `verify_code_semantics(query, code_snippets, model=None)`: one cosine score per candidate |
+| `embeddings/unixcoder.py` | Microsoft's `UniXcoder` model class, vendored with its MIT header |
+| `embeddings/encoder_only_VE.py` | `verify_code_semantics(query, code_snippets, model=None)`: one cosine score per candidate |
 
 It is a library for now: no endpoint, and nothing in the app calls it. The
 first call downloads `microsoft/unixcoder-base` from Hugging Face; pass a loaded
@@ -140,12 +150,13 @@ first call downloads `microsoft/unixcoder-base` from Hugging Face; pass a loaded
 To see a score by hand, compare two files:
 
 ```
-uv run python tests/tester.py tests/word_freq_A.py tests/word_freq_B.py
+uv run python scripts/tester.py scripts/word_freq_A.py scripts/word_freq_B.py
 ```
 
-It prints the similarity and a time/memory report. On an interpreter with the
-`.pth` quirk above, `No module named 'services'` is fixed the same way, with
-`PYTHONPATH=.` instead of `PYTHONPATH=src`.
+It prints the similarity and a time/memory report. The runner and its inputs
+(`word_freq_A.py`, `word_freq_B.py`, `testing_snippets.txt`) live in `scripts/`,
+outside the suite, so `uv run pytest` never loads the model. On an interpreter
+with the `.pth` quirk above, prefix it with `PYTHONPATH=src`.
 
 ## The search pipeline (#4)
 
@@ -242,19 +253,14 @@ FastAPI's own docs are written against, so `TestClient` works as documented.
 [`respx`](https://lundberg.github.io/respx/) mocks GitHub at the HTTP layer, so
 **the suite never makes a network call and needs no token**.
 
-The package uses a **src layout** (`src/code_search_proxy/`) and `uv sync`
+The package uses a **src layout** (`src/snippet_search/`) and `uv sync`
 installs it editable. `tests/conftest.py` still puts `src/` on `sys.path`, for the
-`.pth` reason above — without it the suite cannot import `code_search_proxy` at
+`.pth` reason above — without it the suite cannot import `snippet_search` at
 all on an affected interpreter. It also
 holds the shared fixtures and points `DEFAULT_ENV_FILE` at a throwaway path, so
 the suite's result does not depend on whether you happen to have a `.env`. Tests
 live in `backend/tests/`, mirroring the module they cover, not colocated (that
 differs from the frontend, where Vitest tests sit next to the source).
-
-Not everything in `backend/tests/` is a test. `tester.py`, `word_freq_A.py`,
-`word_freq_B.py` and `testing_snippets.txt` are the manual UniXcoder runner and
-its inputs. pytest only collects `test_*.py`, so `uv run pytest` never loads the
-model.
 
 - Run everything: `uv run pytest`
 - Run one file: `uv run pytest tests/test_app.py`

@@ -5,7 +5,7 @@ import pytest
 import respx
 from fastapi.testclient import TestClient
 
-from code_search_proxy.app import create_app
+from snippet_search.app import create_app
 
 from conftest import RATE_LIMIT_HEADERS, SEARCH_BODY, SETTINGS
 

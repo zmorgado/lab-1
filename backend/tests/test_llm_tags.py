@@ -12,8 +12,8 @@ from dataclasses import replace
 import httpx
 import pytest
 
-from code_search_proxy.config import Settings
-from code_search_proxy.llm_tags import (
+from snippet_search.config import Settings
+from snippet_search.llm_tags import (
     ERROR_EMPTY_SOURCE,
     ERROR_LLM_AUTH,
     ERROR_LLM_MALFORMED,

@@ -14,8 +14,8 @@ import pytest
 import respx
 from fastapi.testclient import TestClient
 
-from code_search_proxy.app import create_app
-from code_search_proxy.llm_tags import (
+from snippet_search.app import create_app
+from snippet_search.llm_tags import (
     ERROR_EMPTY_SOURCE,
     ERROR_LLM_QUOTA,
     ERROR_LLM_UNAVAILABLE,

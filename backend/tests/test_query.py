@@ -1,6 +1,6 @@
 from collections.abc import Iterable
 
-from code_search_proxy.query import NothingToSearch, SearchQuery, build_query
+from snippet_search.query import NothingToSearch, SearchQuery, build_query
 
 # Candidatos ya ordenados por nivel, como los devuelve grep_tags
 RANKED_TAGS = [
