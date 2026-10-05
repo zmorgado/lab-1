@@ -33,7 +33,7 @@ def rank_dictionary_by_value(input_dict, reverse_order=True):
     return dict(sorted_pairs)
 '''
 
-# Salida real de Gemini (gemini-2.5-flash) para SNIPPET, sin editar. Es la
+# Salida real de Gemini (gemini-3.8-flash) para SNIPPET, sin editar. Es la
 # respuesta que valida el AC de #7 contra el snippet del diccionario.
 MODEL_TAGS = {
     "api_calls": ["sorted", "items", "dict"],
@@ -45,7 +45,7 @@ MODEL_TAGS = {
 }
 
 SETTINGS = Settings(
-    github_token="ghp_fake", gemini_api_key="test-key", gemini_model="gemini-2.5-flash"
+    github_token="ghp_fake", gemini_api_key="test-key", gemini_model="gemini-3.8-flash"
 )
 
 
@@ -90,7 +90,7 @@ async def test_request_carries_key_model_and_json_schema() -> None:
     await _service(handler).extract(SNIPPET)
 
     assert seen["key"] == "test-key"
-    assert seen["url"].endswith("/models/gemini-2.5-flash:generateContent")
+    assert seen["url"].endswith("/models/gemini-3.8-flash:generateContent")
     config = seen["body"]["generationConfig"]
     # Sin responseMimeType JSON el modelo devuelve markdown con fences.
     assert config["responseMimeType"] == "application/json"
