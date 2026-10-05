@@ -26,7 +26,7 @@ backend/
   scripts/              manual runners, never collected by pytest
 ```
 
-Each stage is a flat module (`github.py`, `grep_tags.py`, `llm_tags.py`, ...)
+Each stage is a flat module (`github.py`, `ast_grep_tags.py`, `llm_tags.py`, ...)
 and `pipeline.py` chains them. A stage gets a subpackage only when it spans
 several files, as embeddings does. New stages go into the package, not into a
 new top-level folder (#30).
@@ -169,7 +169,7 @@ shape (#8).
 
 | Module | Stage |
 | --- | --- |
-| `grep_tags.py` | 1: `extract_tags(snippet)` → `Tiers`, the candidates in three tiers. Python only |
+| `ast_grep_tags.py` | 1: `extract_tags(snippet)` → `Tiers`, the candidates in three tiers. Python only |
 | `query.py` | 3: `build_query(tags, language)` → `SearchQuery` or `NothingToSearch` |
 | `ast_subtrees.py` | 4: `analyze_snippet(snippet)` → `SnippetShape`; `isolate(file, shape, anchors)` → `Isolation` |
 | `pipeline.py` | `search(github, source, language, llm=, rank=)`: the whole run, below |
@@ -282,7 +282,7 @@ POST /api/tags   {"source": "...", "language": "Python"}   # language optional
 → {"language": "Python", "tags": {"api_calls": [...], "data_structures": [...], ...}}
 ```
 
-**Provider**: Google Gemini (`gemini-2.5-flash`) over plain REST with `httpx`. The
+**Provider**: Google Gemini (`gemini-3.8-flash`) over plain REST with `httpx`. The
 free tier needs no card, takes a JSON schema for the response and lets thinking be
 switched off. Key at <https://aistudio.google.com/apikey>; limits change, read
 <https://ai.google.dev/gemini-api/docs/rate-limits>. Under the free-tier
@@ -294,7 +294,7 @@ anything private.
 
 ```
 GEMINI_API_KEY=          # optional
-GEMINI_MODEL=...         # optional, defaults to gemini-2.5-flash
+GEMINI_MODEL=...         # optional, defaults to gemini-3.8-flash
 ```
 
 The key is optional: the LLM is a complement (#1), so without it the service

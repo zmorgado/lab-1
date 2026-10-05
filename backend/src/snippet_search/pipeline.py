@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .ast_subtrees import SnippetShape, Subtree, UnparseableSource, analyze_snippet, isolate
 from .github import GitHubClient, GitHubError, RateLimit
-from .grep_tags import SUPPORTED_LANGUAGES, Tiers, extract_tags
+from .ast_grep_tags import SUPPORTED_LANGUAGES, Tiers, extract_tags
 from .llm_tags import LlmTagError, TagSet
 from .query import NothingToSearch, SearchQuery, build_query
 

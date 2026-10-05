@@ -1,6 +1,6 @@
 """Armado de la query de search/code a partir de una lista de tags (#4).
 
-Etapa 3. No sabe de donde vienen los tags: hoy de grep_tags, despues tambien del
+Etapa 3. No sabe de donde vienen los tags: hoy de ast_grep_tags, despues tambien del
 LLM y de lo que edite el usuario (#22). Los filtros de owner y repo son #19.
 """
 

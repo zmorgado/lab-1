@@ -25,7 +25,7 @@ from typing import Final
 import tree_sitter_python
 from tree_sitter import Language, Node, Parser
 
-from .grep_tags import GENERIC_NAMES, MIN_TAG_LENGTH
+from .ast_grep_tags import GENERIC_NAMES, MIN_TAG_LENGTH
 
 CATEGORY_FUNCTION: Final = "function"
 CATEGORY_CLASS: Final = "class"
