@@ -14,9 +14,9 @@ SRC = str(Path(__file__).resolve().parent.parent / "src")
 # tests de "falta la credencial" pasan en verde sin probar nada.
 IMPORT_MAIN = (
     "from pathlib import Path;"
-    "import code_search_proxy.config as config;"
+    "import snippet_search.config as config;"
     "config.DEFAULT_ENV_FILE = Path('/nonexistent/.env');"
-    "import code_search_proxy.main"
+    "import snippet_search.main"
 )
 
 
@@ -62,7 +62,7 @@ def test_a_local_env_file_does_not_mask_the_missing_credential(tmp_path) -> None
     Con el .env que documenta BACKEND.md, load_settings tomaba la credencial de
     ahi y el caso 'falta la credencial' no se probaba nunca.
     """
-    from code_search_proxy.config import MissingCredentialError, load_settings
+    from snippet_search.config import MissingCredentialError, load_settings
 
     env_file = tmp_path / ".env"
     env_file.write_text("GITHUB_TOKEN=ghp_from_a_local_file\n")

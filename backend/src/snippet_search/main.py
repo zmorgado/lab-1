@@ -1,6 +1,6 @@
 """Entrypoint del servicio (#3).
 
-'uv run code-search-proxy' entra por main(); 'uvicorn code_search_proxy.main:app'
+'uv run snippet-search' entra por main(); 'uvicorn snippet_search.main:app'
 entra por app. Los dos caminos resuelven la config al arrancar, asi que si falta
 la credencial el proceso muere ahi y no en el primer request.
 """

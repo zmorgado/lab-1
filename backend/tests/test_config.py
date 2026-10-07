@@ -2,7 +2,7 @@ import subprocess
 
 import pytest
 
-from code_search_proxy.config import (
+from snippet_search.config import (
     DEFAULT_GEMINI_MODEL,
     GH_TIMEOUT_SECONDS,
     MissingCredentialError,
@@ -137,7 +137,7 @@ def test_env_file_strips_surrounding_quotes(tmp_path) -> None:
 def test_the_gh_cli_is_the_last_resort_for_the_token(monkeypatch, tmp_path) -> None:
     # En una maquina con 'gh' ya logueado no hay que configurar nada
     monkeypatch.setattr(
-        "code_search_proxy.config.read_gh_cli_token", lambda: "gho_from_gh_cli"
+        "snippet_search.config.read_gh_cli_token", lambda: "gho_from_gh_cli"
     )
 
     settings = load_settings({}, env_file=tmp_path / "nonexistent.env")
@@ -147,7 +147,7 @@ def test_the_gh_cli_is_the_last_resort_for_the_token(monkeypatch, tmp_path) -> N
 
 def test_the_environment_wins_over_the_gh_cli(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
-        "code_search_proxy.config.read_gh_cli_token", lambda: "gho_from_gh_cli"
+        "snippet_search.config.read_gh_cli_token", lambda: "gho_from_gh_cli"
     )
 
     settings = load_settings({"GITHUB_TOKEN": "ghp_explicit"}, env_file=tmp_path / "no.env")
@@ -157,7 +157,7 @@ def test_the_environment_wins_over_the_gh_cli(monkeypatch, tmp_path) -> None:
 
 def test_the_env_file_wins_over_the_gh_cli(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
-        "code_search_proxy.config.read_gh_cli_token", lambda: "gho_from_gh_cli"
+        "snippet_search.config.read_gh_cli_token", lambda: "gho_from_gh_cli"
     )
     env_file = tmp_path / ".env"
     env_file.write_text("GITHUB_TOKEN=ghp_from_file\n")
@@ -169,7 +169,7 @@ def test_the_env_file_wins_over_the_gh_cli(monkeypatch, tmp_path) -> None:
 
 def test_it_still_fails_loudly_when_the_gh_cli_has_no_token(monkeypatch, tmp_path) -> None:
     # Sin 'gh', o con 'gh' deslogueado, el arranque tiene que seguir reventando
-    monkeypatch.setattr("code_search_proxy.config.read_gh_cli_token", lambda: None)
+    monkeypatch.setattr("snippet_search.config.read_gh_cli_token", lambda: None)
 
     with pytest.raises(MissingCredentialError):
         load_settings({}, env_file=tmp_path / "nonexistent.env")
