@@ -12,6 +12,7 @@ from dataclasses import replace
 import httpx
 import pytest
 
+from snippet_search.ast_grep_tags import extract_tags
 from snippet_search.config import Settings
 from snippet_search.llm_tags import (
     ERROR_EMPTY_SOURCE,
@@ -19,7 +20,11 @@ from snippet_search.llm_tags import (
     ERROR_LLM_MALFORMED,
     ERROR_LLM_QUOTA,
     ERROR_LLM_UNAVAILABLE,
-    MAX_TAGS_PER_CATEGORY,
+    KIND_SYNTACTIC,
+    KINDS,
+    MAX_TAGS_PER_KIND,
+    SOURCE_LLM,
+    SOURCE_SEED,
     GeminiTagService,
     LlmTagError,
 )
@@ -33,14 +38,21 @@ def rank_dictionary_by_value(input_dict, reverse_order=True):
     return dict(sorted_pairs)
 '''
 
-# Salida real de Gemini (gemini-3.8-flash) para SNIPPET, sin editar. Es la
-# respuesta que valida el AC de #7 contra el snippet del diccionario.
+# Los tiers reales del AST para SNIPPET: lo que recibe el modelo junto al codigo
+TIERS = extract_tags(SNIPPET)
+
+# Respuesta de ejemplo con la forma de #22, escrita a mano: no es salida real
+# del modelo. La real del AC de #7 tenia las cinco categorias de antes
 MODEL_TAGS = {
-    "api_calls": ["sorted", "items", "dict"],
-    "data_structures": ["dictionary", "list", "tuple"],
-    "paradigm": ["functional programming", "lambda", "higher-order function"],
-    "algorithm": ["dictionary sorting", "key-value sorting"],
-    "domain_keywords": ["ranking", "data manipulation"],
+    "tags": [
+        {"tag": "sorted", "kind": "syntactic"},
+        {"tag": "items", "kind": "syntactic"},
+        {"tag": "sort_by_value", "kind": "conceptual"},
+        {"tag": "ranking", "kind": "conceptual"},
+        {"tag": "dictionary", "kind": "conceptual"},
+        {"tag": "lambda", "kind": "paradigm"},
+        {"tag": "itemgetter", "kind": "paradigm"},
+    ],
     "language": "Python",
 }
 
@@ -63,19 +75,48 @@ def _service(handler) -> GeminiTagService:
 # --- extraccion ----------------------------------------------------------
 
 
-async def test_extract_maps_every_category() -> None:
+async def test_extract_returns_one_list_in_the_model_order() -> None:
     service = _service(lambda request: httpx.Response(200, json=_gemini_response()))
 
-    tags = await service.extract(SNIPPET, language="Python")
+    tags = await service.extract(SNIPPET, language="Python", tiers=TIERS)
 
-    # AC de #7: las cinco categorias del snippet del diccionario, y el LLM suma
-    # lo que el grep no ve: 'higher-order function' no esta escrito en el codigo
-    assert tags.api_calls == ("sorted", "items", "dict")
-    assert tags.data_structures == ("dictionary", "list", "tuple")
-    assert tags.paradigm == ("functional programming", "lambda", "higher-order function")
-    assert tags.algorithm == ("dictionary sorting", "key-value sorting")
-    assert tags.domain_keywords == ("ranking", "data manipulation")
+    assert [(t.text, t.kind) for t in tags.tags] == [
+        (item["tag"], item["kind"]) for item in MODEL_TAGS["tags"]
+    ]
     assert tags.language == "Python"
+
+
+async def test_the_source_says_whether_a_tag_was_already_a_seed() -> None:
+    service = _service(lambda request: httpx.Response(200, json=_gemini_response()))
+
+    tags = await service.extract(SNIPPET, tiers=TIERS)
+
+    sources = {t.text: t.source for t in tags.tags}
+    # 'sorted' y 'dictionary' estaban en los tiers; 'itemgetter' lo sumo el modelo
+    assert sources["sorted"] == SOURCE_SEED
+    assert sources["dictionary"] == SOURCE_SEED
+    assert sources["itemgetter"] == SOURCE_LLM
+
+
+async def test_without_tiers_every_tag_comes_from_the_model() -> None:
+    service = _service(lambda request: httpx.Response(200, json=_gemini_response()))
+
+    tags = await service.extract(SNIPPET)
+
+    assert {t.source for t in tags.tags} == {SOURCE_LLM}
+
+
+async def test_the_tiers_reach_the_prompt() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["text"] = json.loads(request.content)["contents"][0]["parts"][0]["text"]
+        return httpx.Response(200, json=_gemini_response())
+
+    await _service(handler).extract(SNIPPET, tiers=TIERS)
+
+    assert TIERS.ordered()
+    assert all(tag in seen["text"] for tag in TIERS.ordered())
 
 
 async def test_request_carries_key_model_and_json_schema() -> None:
@@ -95,7 +136,9 @@ async def test_request_carries_key_model_and_json_schema() -> None:
     # Sin responseMimeType JSON el modelo devuelve markdown con fences.
     assert config["responseMimeType"] == "application/json"
     assert config["temperature"] == 0.0
-    assert "api_calls" in config["responseSchema"]["properties"]
+    # El tipo de cada tag viene acotado a las tres queries de #19
+    tag_schema = config["responseSchema"]["properties"]["tags"]["items"]
+    assert tag_schema["properties"]["kind"]["enum"] == list(KINDS)
 
 
 async def test_language_reaches_the_prompt() -> None:
@@ -130,39 +173,57 @@ async def test_the_model_uses_the_configured_model_name() -> None:
 
 async def test_blank_and_repeated_tags_are_dropped() -> None:
     noisy = {
-        "api_calls": ["sorted", "  ", "sorted"],
-        "data_structures": [],
-        "paradigm": [],
-        "algorithm": [],
-        "domain_keywords": [],
+        "tags": [
+            {"tag": "sorted", "kind": "syntactic"},
+            {"tag": "  ", "kind": "syntactic"},
+            {"tag": "Sorted", "kind": "paradigm"},
+        ],
         "language": "Python",
     }
     service = _service(lambda r: httpx.Response(200, json=_gemini_response(noisy)))
 
     tags = await service.extract(SNIPPET)
 
-    assert tags.api_calls == ("sorted",)
-    assert tags.data_structures == ()
+    assert [t.text for t in tags.tags] == ["sorted"]
 
 
-async def test_a_category_is_capped_even_when_the_model_ignores_the_prompt() -> None:
+async def test_a_kind_outside_the_three_queries_is_dropped() -> None:
+    invented = {
+        "tags": [{"tag": "binary search", "kind": "algorithm"}, {"tag": "sorted", "kind": "syntactic"}],
+        "language": "Python",
+    }
+    service = _service(lambda r: httpx.Response(200, json=_gemini_response(invented)))
+
+    tags = await service.extract(SNIPPET)
+
+    assert [t.text for t in tags.tags] == ["sorted"]
+
+
+async def test_each_kind_is_capped_even_when_the_model_ignores_the_prompt() -> None:
     # Pasa de verdad con archivos grandes: el prompt pide 6 y el modelo manda 18.
-    greedy = {**MODEL_TAGS, "api_calls": [f"call_{i}" for i in range(20)]}
+    greedy = {
+        "tags": [{"tag": f"call_{i}", "kind": "syntactic"} for i in range(20)]
+        + [{"tag": "ranking", "kind": "conceptual"}],
+        "language": "Python",
+    }
     service = _service(lambda r: httpx.Response(200, json=_gemini_response(greedy)))
 
     tags = await service.extract(SNIPPET)
 
-    assert len(tags.api_calls) == MAX_TAGS_PER_CATEGORY
+    kinds = [t.kind for t in tags.tags]
+    assert kinds.count(KIND_SYNTACTIC) == MAX_TAGS_PER_KIND
+    # El tope es por tipo: el resto de la lista no paga por los de mas
+    assert "ranking" in [t.text for t in tags.tags]
 
 
 async def test_generic_words_are_kept_because_the_model_describes() -> None:
-    # #19 decide que entra a la query; aca no se descarta nada por generico
-    generic = {**MODEL_TAGS, "data_structures": ["dict", "list"]}
+    # #22 decide que entra al pool; aca no se descarta nada por generico
+    generic = {"tags": [{"tag": "dict", "kind": "syntactic"}], "language": "Python"}
     service = _service(lambda r: httpx.Response(200, json=_gemini_response(generic)))
 
     tags = await service.extract(SNIPPET)
 
-    assert tags.data_structures == ("dict", "list")
+    assert [t.text for t in tags.tags] == ["dict"]
 
 
 async def test_language_falls_back_to_the_caller_when_the_model_omits_it() -> None:

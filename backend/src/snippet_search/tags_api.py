@@ -39,12 +39,17 @@ class TagsRequest(BaseModel):
     )
 
 
+class TagItem(BaseModel):
+    tag: str
+    kind: str = Field(description="The query it feeds (#19): syntactic, conceptual or paradigm")
+    source: str = Field(
+        description="'seed' if it was among the AST tiers, 'llm' if the model added it"
+    )
+
+
 class TagsResponse(BaseModel):
     language: str | None
-    tags: dict[str, list[str]] = Field(
-        description="The five categories, in order: api_calls, data_structures, "
-        "paradigm, algorithm, domain_keywords"
-    )
+    tags: list[TagItem] = Field(description="Most relevant first")
 
 
 async def handle_llm_tag_error(_: Request, error: LlmTagError) -> Response:

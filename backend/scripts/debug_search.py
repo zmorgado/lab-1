@@ -22,8 +22,9 @@ from snippet_search.github import GitHubClient
 from snippet_search.llm_tags import GeminiTagService
 from snippet_search.pipeline import search, unixcoder_rank
 
-# El ejemplo de docs/research/solution-schematics-v2.md
-DEFAULT_SNIPPET = '''
+# El ejemplo de docs/research/solution-schematics-v2.md. Raw: el '\r\n' de un
+# comentario tiene que llegar como texto, no como un salto de linea real
+DEFAULT_SNIPPET = r'''
 """Agente base: define el flujo fijo de un turno (Template Method)."""
 
 from abc import ABC, abstractmethod
@@ -128,8 +129,9 @@ async def main(source: str) -> None:
     async with GitHubClient(settings) as github, GeminiTagService(settings) as llm:
         outcome = await search(github, source, "python", llm=llm, rank=unixcoder_rank)
 
-    print(f"query:    {outcome.query.q}")
-    print(f"llm:      {outcome.llm_tags.as_dict() if outcome.llm_tags else outcome.llm_error}")
+    for run in outcome.queries:
+        print(f"query:    [{run.kind}] {run.query.q}" + (f"  ({run.error})" if run.error else ""))
+    print(f"llm:      {outcome.llm_tags.as_list() if outcome.llm_tags else outcome.llm_error}")
     print(f"snippet:  {outcome.snippet}")
     print(f"anchors:  {list(outcome.anchors)}")
     print(f"rejected: {outcome.rejected}")
@@ -142,6 +144,7 @@ async def main(source: str) -> None:
         print(
             f"  {candidate.score:.3f}  {candidate.repo}/{candidate.path}"
             f":{subtree.start_line}-{subtree.end_line}  {subtree.name}  {list(subtree.anchors)}"
+            f"  queries={list(candidate.queries)}"
         )
 
 

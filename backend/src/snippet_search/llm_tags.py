@@ -1,9 +1,10 @@
-"""Servicio de tags por LLM (#7).
+"""Servicio de tags por LLM (#7, #22).
 
-Etapa 2 del pipeline: toma un snippet pegado y devuelve las cinco categorias de
-tags de `docs/research/solution-schematics-v2.md`. Complementa al servicio de
-grep (#4), no lo reemplaza: el grep saca lo que el codigo dice literal, y el LLM
-lo que el codigo *es*. Que tags entran a la query se decide en #19.
+Etapa 2, parte 2 del pipeline: toma el snippet pegado y los tiers que saco el
+AST (#4), y devuelve una sola lista de tags, la mas relevante primero. Cada tag
+dice a cual de las tres queries de #19 va y si ya estaba en los tiers o lo sumo
+el modelo. Complementa al AST, no lo reemplaza: el merge con lo que edita el
+usuario es de #22.
 
 El cliente es async y se usa como context manager, igual que `GitHubClient`:
 las dos cosas terminan colgadas del mismo lifespan de FastAPI y un
@@ -14,28 +15,30 @@ segundos que tarda el modelo.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from types import TracebackType
 from typing import Any, Final
 
 import httpx
 
+from .ast_grep_tags import Tiers
 from .config import Settings
 
 GEMINI_BASE_URL: Final = "https://generativelanguage.googleapis.com/v1beta"
 
-# Orden de las categorias, de la mas literal a la mas descriptiva
-CATEGORIES: Final[tuple[str, ...]] = (
-    "api_calls",
-    "data_structures",
-    "paradigm",
-    "algorithm",
-    "domain_keywords",
-)
+# El tipo decide a cual de las tres queries de #19 va el tag
+KIND_SYNTACTIC: Final = "syntactic"
+KIND_CONCEPTUAL: Final = "conceptual"
+KIND_PARADIGM: Final = "paradigm"
+KINDS: Final[tuple[str, ...]] = (KIND_SYNTACTIC, KIND_CONCEPTUAL, KIND_PARADIGM)
 
-# El modelo ignora el "at most 6 per category" del prompt cuando el archivo es
-# grande, asi que el tope se aplica tambien del lado del codigo.
-MAX_TAGS_PER_CATEGORY: Final = 6
+# De donde salio el tag. Lo decide el codigo comparando con los tiers, no el modelo
+SOURCE_SEED: Final = "seed"
+SOURCE_LLM: Final = "llm"
+
+# Cada tipo llena una query de 6 tags (#19), asi que mas no sirve. El modelo a
+# veces ignora el tope del prompt, por eso se aplica tambien del lado del codigo
+MAX_TAGS_PER_KIND: Final = 6
 
 MAX_SOURCE_CHARS: Final = 20_000
 
@@ -52,32 +55,59 @@ ERROR_LLM_MALFORMED: Final = "llm_malformed_response"
 ERROR_LLM_FAILED: Final = "llm_request_failed"
 
 _SYSTEM_INSTRUCTION: Final = """\
-You describe a code snippet as search tags. A separate regex tool already
-extracts whatever is written literally in the code (identifiers, calls,
-keywords), so do not limit yourself to that. Your job is what the regex cannot
-do: say what the code *is*, including things the source never spells out.
+You turn a code snippet into tags for GitHub code search, to find functional
+clones of it: code that does the same thing, whether it is written the same
+way or in another style or library. The search matches text, not meaning: a
+tag only finds files that contain it, in code, names or comments.
 
-Fill five categories:
+You get the snippet and the seed tags a parser already pulled out of its AST,
+in tiers:
+- apis: imported modules and the functions and methods it calls
+- structures: the names it defines (functions, classes) and constructs such
+  as `lambda`
+- domain: words from its docstrings
 
-- api_calls: the library and builtin calls the code relies on, as written:
-  `sorted`, `items`, `train_test_split`.
-- data_structures: the data structures the code operates on, by name: `dict`,
-  `defaultdict`, `DataFrame`, `heap`.
-- paradigm: the programming paradigm or idiom, described in plain words even if
-  no keyword names it: `higher-order function`, `comprehension`, `recursion`,
-  `lambda`.
-- algorithm: what the code does, the way a developer would describe it:
-  `sort dict by value`, `binary search`, `memoize`.
-- domain_keywords: the problem domain: `ranking`, `pagination`, `checksum`.
-- language: the source language in GitHub's spelling (`Python`, `JavaScript`,
-  `Jupyter Notebook`, `C++`). Infer it from the code if it was not given.
+Return one list of tags that covers both what the code says and what it does.
+Keep the seeds that would help find code doing the same thing, drop the ones
+that would not, and add what the seeds miss.
+
+Give every tag a kind. The kind decides which search query the tag feeds:
+- syntactic: the concrete identifiers, standard methods and container types a
+  near-literal copy would share (`sorted`, `items`, `defaultdict`).
+- conceptual: the code's goal and domain, in the words programmers write in
+  names and comments. Turn the snippet's own names into intent terms and
+  synonyms: `rank_dict` -> `sort_by_value`, `ranking`, `top_k`.
+- paradigm: other ways to write the same thing. Alternative idioms (`lambda`
+  -> `itemgetter`, a loop -> a comprehension or vectorized operations) and
+  alternative libraries (`dict` -> `DataFrame`, a hand-written cosine ->
+  `cdist` or `cosine_similarity`).
+
+Also return `language`: the source language in GitHub's spelling (`Python`,
+`JavaScript`, `Jupyter Notebook`, `C++`). Infer it from the code if it was not
+given.
 
 Rules:
-- Never invent an API the snippet does not use or clearly imply.
-- At most 6 tags per category, fewer when the snippet is short, most relevant
-  first. An empty category is fine.
+- Prefer words that appear in real code over descriptions of it: `itemgetter`
+  finds code, `higher-order function` mostly does not.
+- Keep tags short: one identifier, or at most three words.
+- Skip names every snippet has: `self`, `print`, `len`, `range`, `str`,
+  `list`, `dict`.
+- Drop imports of modules only one project would have: company-internal or
+  project-local packages (`ringr_agents`, `myapp.utils`). No other repository
+  contains them. Keep the standard library and well-known public packages
+  (`pydantic`, `numpy`).
+- When you keep a seed, copy it exactly as given.
+- Never invent an API. Add only real ones: those the snippet uses or, as
+  `paradigm`, those another implementation of the same thing really uses.
+- At most 6 tags per kind, most relevant first: each kind feeds one query,
+  and a file has to match every term in it. Fewer when the snippet is short;
+  an empty kind is fine.
+- Write tags, not queries: no qualifiers such as `language:`. The search
+  builds the queries from the list.
 - Return only the JSON object. No prose, no markdown fences.\
 """
+
+
 
 # Schema OpenAPI que Gemini respeta al generar. Con `responseMimeType` en JSON
 # la respuesta viene garantizada con esta forma, asi que no hace falta parsear
@@ -85,28 +115,44 @@ Rules:
 _RESPONSE_SCHEMA: Final[dict[str, Any]] = {
     "type": "OBJECT",
     "properties": {
-        **{c: {"type": "ARRAY", "items": {"type": "STRING"}} for c in CATEGORIES},
+        "tags": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "tag": {"type": "STRING"},
+                    "kind": {"type": "STRING", "format": "enum", "enum": list(KINDS)},
+                },
+                "required": ["tag", "kind"],
+                "propertyOrdering": ["tag", "kind"],
+            },
+        },
         "language": {"type": "STRING"},
     },
-    "required": [*CATEGORIES, "language"],
-    "propertyOrdering": [*CATEGORIES, "language"],
+    "required": ["tags", "language"],
+    "propertyOrdering": ["tags", "language"],
 }
 
 
 @dataclass(frozen=True)
-class TagSet:
-    """Las cinco categorias de la Etapa 2, ya normalizadas y deduplicadas."""
+class Tag:
+    """Un tag de la lista: el texto, la query de #19 que alimenta y de donde salio."""
 
-    api_calls: tuple[str, ...] = ()
-    data_structures: tuple[str, ...] = ()
-    paradigm: tuple[str, ...] = ()
-    algorithm: tuple[str, ...] = ()
-    domain_keywords: tuple[str, ...] = ()
+    text: str
+    kind: str
+    source: str
+
+
+@dataclass(frozen=True)
+class TagSet:
+    """La lista de la Etapa 2, ya normalizada: la mas relevante primero."""
+
+    tags: tuple[Tag, ...] = ()
     language: str | None = None
 
-    def as_dict(self) -> dict[str, list[str]]:
-        """Las categorias en orden, para serializar sin perder el orden."""
-        return {category: list(getattr(self, category)) for category in CATEGORIES}
+    def as_list(self) -> list[dict[str, str]]:
+        """La forma que devuelven /api/tags y /api/search."""
+        return [{"tag": t.text, "kind": t.kind, "source": t.source} for t in self.tags]
 
 
 class LlmTagError(RuntimeError):
@@ -180,8 +226,13 @@ class GeminiTagService:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def extract(self, source: str, *, language: str | None = None) -> TagSet:
+    async def extract(
+        self, source: str, *, language: str | None = None, tiers: Tiers | None = None
+    ) -> TagSet:
         """Saca los tags de un snippet pegado.
+
+        `tiers` son los tags que ya saco el AST (#4): el modelo se queda con los
+        que sirven y suma lo que les falta. Sin tiers trabaja solo con el codigo.
 
         `language` es opcional: si viene, el modelo no tiene que inferir el
         lenguaje, que es donde mas se equivoca con snippets cortos o con
@@ -200,15 +251,17 @@ class GeminiTagService:
                 code=ERROR_LLM_UNAVAILABLE,
             )
 
-        payload = self._build_payload(source, language=language)
+        payload = self._build_payload(source, language=language, tiers=tiers)
         data = await self._post(payload)
-        return self._to_tag_set(data, fallback_language=language)
+        return self._to_tag_set(data, tiers=tiers, fallback_language=language)
 
     # --- interno ---------------------------------------------------------
 
-    def _build_payload(self, source: str, *, language: str | None) -> dict[str, Any]:
+    def _build_payload(
+        self, source: str, *, language: str | None, tiers: Tiers | None
+    ) -> dict[str, Any]:
         header = f"Language: {language}\n" if language else ""
-        prompt = f"{header}Code:\n\n{source[:MAX_SOURCE_CHARS]}"
+        prompt = f"{header}{_seed_lines(tiers)}Code:\n\n{source[:MAX_SOURCE_CHARS]}"
 
         return {
             "systemInstruction": {"parts": [{"text": _SYSTEM_INSTRUCTION}]},
@@ -268,25 +321,54 @@ class GeminiTagService:
         return data
 
     def _to_tag_set(
-        self, data: dict[str, Any], *, fallback_language: str | None
+        self, data: dict[str, Any], *, tiers: Tiers | None, fallback_language: str | None
     ) -> TagSet:
         """Normaliza la salida del modelo antes de dejarla entrar al dominio.
 
-        El schema garantiza la forma (listas de strings), no el contenido: igual
-        se filtran vacios, se deduplica y se aplica el tope por categoria.
+        El schema garantiza la forma, no el contenido: igual se filtran vacios y
+        tipos desconocidos, se deduplica y se aplica el tope por tipo.
         """
-        categories = {category: _clean(data.get(category)) for category in CATEGORIES}
+        seeds = frozenset(tag.lower() for tag in tiers.ordered()) if tiers else frozenset()
         language = data.get("language") or fallback_language
         return TagSet(
-            **categories,
+            tags=_clean(data.get("tags"), seeds),
             language=language.strip() if isinstance(language, str) else None,
         )
 
 
-def _clean(values: list[str] | None) -> tuple[str, ...]:
-    # dict.fromkeys deduplica conservando el orden del modelo
-    unique = dict.fromkeys(tag.strip() for tag in values or () if tag.strip())
-    return tuple(unique)[:MAX_TAGS_PER_CATEGORY]
+def _seed_lines(tiers: Tiers | None) -> str:
+    """Los tiers como los lee el modelo: un renglon por tier."""
+    if tiers is None:
+        return ""
+    # Solo los tiers de tags: si Tiers suma flags (#22 pide is_fallback), no van
+    lines = [
+        f"- {name}: {', '.join(tags) or '(none)'}"
+        for name, tags in asdict(tiers).items()
+        if isinstance(tags, tuple)
+    ]
+    return "Seed tags:\n" + "\n".join(lines) + "\n\n"
+
+
+def _clean(items: Any, seeds: frozenset[str]) -> tuple[Tag, ...]:
+    """Los tags del modelo en su orden, sin vacios, repetidos ni tipos inventados."""
+    kept: list[Tag] = []
+    seen: set[str] = set()
+    per_kind = dict.fromkeys(KINDS, 0)
+    for item in items if isinstance(items, list) else ():
+        if not isinstance(item, dict):
+            continue
+        text, kind = item.get("tag"), item.get("kind")
+        if not isinstance(text, str) or kind not in KINDS:
+            continue
+        text = text.strip()
+        # 'Sort' y 'sort' cuentan como el mismo tag
+        key = text.lower()
+        if not text or key in seen or per_kind[kind] == MAX_TAGS_PER_KIND:
+            continue
+        seen.add(key)
+        per_kind[kind] += 1
+        kept.append(Tag(text, kind, SOURCE_SEED if key in seeds else SOURCE_LLM))
+    return tuple(kept)
 
 
 def _retry_after_seconds(response: httpx.Response) -> int | None:

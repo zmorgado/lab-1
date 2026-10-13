@@ -13,9 +13,20 @@ import pytest
 import respx
 
 from snippet_search import pipeline
-from snippet_search.github import GitHubClient
-from snippet_search.llm_tags import ERROR_LLM_QUOTA, LlmTagError, TagSet
-from snippet_search.pipeline import search
+from snippet_search.ast_grep_tags import Tiers
+from snippet_search.github import GitHubClient, GitHubError
+from snippet_search.llm_tags import (
+    ERROR_LLM_QUOTA,
+    KIND_CONCEPTUAL,
+    KIND_PARADIGM,
+    KIND_SYNTACTIC,
+    SOURCE_LLM,
+    SOURCE_SEED,
+    LlmTagError,
+    Tag,
+    TagSet,
+)
+from snippet_search.pipeline import QUERY_TIERS, search
 
 from conftest import SETTINGS
 
@@ -54,6 +65,14 @@ TEMPLATE = item("example-org/django-template", "users/models.py")
 PRIVATE = item("example-org/private-sorting", "lib/bisect.py", private=True)
 GONE = item("example-org/gone", "lib/missing.py")
 
+# Un LLM que deja dos queries: 'insert' (sintactica) y 'value' (conceptual)
+TWO_KINDS = TagSet(
+    tags=(
+        Tag("insert", KIND_SYNTACTIC, SOURCE_SEED),
+        Tag("value", KIND_CONCEPTUAL, SOURCE_SEED),
+    )
+)
+
 
 def mock_search(*items: dict) -> respx.Route:
     return respx.get(f"{API}/search/code").mock(
@@ -61,6 +80,18 @@ def mock_search(*items: dict) -> respx.Route:
             200, json={"total_count": len(items), "incomplete_results": False, "items": list(items)}
         )
     )
+
+
+def mock_searches(by_q: dict[str, list[dict]]) -> respx.Route:
+    """search/code con una respuesta por query; una que no esta vuelve vacia."""
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        items = by_q.get(request.url.params["q"], [])
+        return httpx.Response(
+            200, json={"total_count": len(items), "incomplete_results": False, "items": items}
+        )
+
+    return respx.get(f"{API}/search/code").mock(side_effect=respond)
 
 
 def mock_contents(entry: dict, fixture: str) -> respx.Route:
@@ -79,8 +110,12 @@ class StubLlm:
     def __init__(self, tags: TagSet | None = None, error: LlmTagError | None = None) -> None:
         self.tags = tags or TagSet()
         self.error = error
+        self.tiers: Tiers | None = None
 
-    async def extract(self, source: str, *, language: str | None = None) -> TagSet:
+    async def extract(
+        self, source: str, *, language: str | None = None, tiers: Tiers | None = None
+    ) -> TagSet:
+        self.tiers = tiers
         if self.error is not None:
             raise self.error
         return self.tags
@@ -153,13 +188,119 @@ async def test_files_that_cannot_be_used_are_skipped_with_a_reason(github: GitHu
 async def test_llm_tags_join_the_anchors(github: GitHubClient) -> None:
     mock_search(SORTING)
     mock_contents(SORTING, "cpython_bisect")
-    llm = StubLlm(TagSet(algorithm=("binary search",), paradigm=("generator",)))
+    llm = StubLlm(
+        TagSet(
+            tags=(
+                Tag("binary search", KIND_CONCEPTUAL, SOURCE_LLM),
+                Tag("generator", KIND_PARADIGM, SOURCE_LLM),
+            )
+        )
+    )
 
     outcome = await search(github, INSERT_SORTED, "python", llm=llm, rank=StubRanker())
 
-    # Grep primero; despues el LLM, en el orden de sus categorias
-    assert outcome.anchors == ("insert", "insert_sorted", "generator", "binary search")
+    # El AST primero; despues el LLM, en el orden de su lista
+    assert outcome.anchors == ("insert", "insert_sorted", "binary search", "generator")
     assert outcome.llm_error is None
+    # El LLM recibio los tiers del snippet
+    assert llm.tiers == outcome.tiers
+
+
+@respx.mock
+async def test_each_kind_of_tag_runs_its_own_query(github: GitHubClient) -> None:
+    search_route = mock_search(SORTING)
+    mock_contents(SORTING, "cpython_bisect")
+    # Se quedo con 'insert' y 'value' y sumo 'bisect'; 'insert_sorted' e 'into' no le sirven
+    llm = StubLlm(
+        TagSet(
+            tags=(
+                Tag("insert", KIND_SYNTACTIC, SOURCE_SEED),
+                Tag("value", KIND_CONCEPTUAL, SOURCE_SEED),
+                Tag("bisect", KIND_PARADIGM, SOURCE_LLM),
+            )
+        )
+    )
+
+    outcome = await search(github, INSERT_SORTED, "python", llm=llm, rank=StubRanker())
+
+    # Una por tipo, en serie y en el orden de los tipos
+    sent = [call.request.url.params["q"] for call in search_route.calls]
+    assert sent == ["insert language:python", "value language:python", "bisect language:python"]
+    assert [run.kind for run in outcome.queries] == [KIND_SYNTACTIC, KIND_CONCEPTUAL, KIND_PARADIGM]
+    # El seed que el LLM descarto no entra en ninguna
+    assert not any("insert_sorted" in q for q in sent)
+
+
+@respx.mock
+async def test_files_found_by_more_queries_are_fetched_first(
+    github: GitHubClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(pipeline, "MAX_CANDIDATE_FILES", 1)
+    # TEMPLATE sale primero en la sintactica, pero SORTING lo encontraron las dos
+    mock_searches(
+        {"insert language:python": [TEMPLATE, SORTING], "value language:python": [SORTING]}
+    )
+    template = mock_contents(TEMPLATE, "cookiecutter_users_models")
+    mock_contents(SORTING, "cpython_bisect")
+
+    outcome = await search(github, INSERT_SORTED, "python", llm=StubLlm(TWO_KINDS), rank=StubRanker())
+
+    assert not template.called
+    assert {c.queries for c in outcome.candidates} == {(KIND_SYNTACTIC, KIND_CONCEPTUAL)}
+
+
+@respx.mock
+async def test_the_same_content_in_two_repos_is_one_file_fetched_from_the_public_one(
+    github: GitHubClient,
+) -> None:
+    private_copy = {**PRIVATE, "sha": SORTING["sha"]}
+    mock_searches(
+        {"insert language:python": [private_copy], "value language:python": [SORTING]}
+    )
+    private = respx.get(f"{API}/repos/example-org/private-sorting/contents/lib/bisect.py")
+    mock_contents(SORTING, "cpython_bisect")
+
+    outcome = await search(github, INSERT_SORTED, "python", llm=StubLlm(TWO_KINDS), rank=StubRanker())
+
+    # Mismo sha: un solo archivo, encontrado por las dos queries, y se baja del publico
+    assert not private.called
+    assert outcome.skipped == ()
+    assert {(c.repo, c.queries) for c in outcome.candidates} == {
+        ("example-org/sorting-utils", (KIND_SYNTACTIC, KIND_CONCEPTUAL))
+    }
+
+
+@respx.mock
+async def test_a_failing_query_does_not_sink_the_others(github: GitHubClient) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.params["q"] == "insert language:python":
+            return httpx.Response(422, json={"message": "Validation Failed"})
+        return httpx.Response(
+            200, json={"total_count": 1, "incomplete_results": False, "items": [SORTING]}
+        )
+
+    respx.get(f"{API}/search/code").mock(side_effect=respond)
+    mock_contents(SORTING, "cpython_bisect")
+
+    outcome = await search(github, INSERT_SORTED, "python", llm=StubLlm(TWO_KINDS), rank=StubRanker())
+
+    assert {run.kind: run.error for run in outcome.queries} == {
+        KIND_SYNTACTIC: "GitHub 422: Validation Failed",
+        KIND_CONCEPTUAL: None,
+    }
+    assert {c.queries for c in outcome.candidates} == {(KIND_CONCEPTUAL,)}
+
+
+@respx.mock
+async def test_if_every_query_fails_the_search_fails(github: GitHubClient) -> None:
+    respx.get(f"{API}/search/code").mock(
+        return_value=httpx.Response(403, json={"message": "API rate limit exceeded"})
+    )
+
+    with pytest.raises(GitHubError) as exc:
+        await search(github, INSERT_SORTED, "python", llm=StubLlm(TWO_KINDS), rank=StubRanker())
+
+    assert exc.value.status_code == 403
 
 
 @respx.mock
@@ -171,6 +312,10 @@ async def test_a_failing_llm_leaves_the_run_on_grep_tags(github: GitHubClient) -
     outcome = await search(github, INSERT_SORTED, "python", llm=llm, rank=StubRanker())
 
     assert outcome.llm_error == ERROR_LLM_QUOTA
+    # Sin LLM no hay tipos: una sola query con los tiers, como antes de #19
+    assert [(run.kind, run.query.tags) for run in outcome.queries] == [
+        (QUERY_TIERS, outcome.tiers.ordered())
+    ]
     assert outcome.anchors == ("insert", "insert_sorted")
     assert len(outcome.candidates) == 4
 
