@@ -317,7 +317,8 @@ def test_search_returns_the_tags_alongside_githubs_results(client: TestClient) -
         "llm": {"tags": None, "error": "llm_unavailable"},
         "snippet": {"category": "function", "fallback": False, "lines": 2},
         "anchors": ["sorted", "items", "sort_dictionary", "lambda"],
-        "candidates": [],
+        # Ninguno llego al AST: resultado vacio explicito (#8)
+        "results": [],
         "rejected": {"A": 0, "C": 0, "B": 0, "length": 0, "budget": 0},
         "skipped": [
             {
@@ -326,8 +327,52 @@ def test_search_returns_the_tags_alongside_githubs_results(client: TestClient) -
                 "reason": "the search result carries no ref to fetch",
             },
         ],
-        "results": {"tiers": SEARCH_BODY},
+        # El contenido tiene copia publica: no cuenta como privado excluido
+        "private_excluded": 0,
+        # Las crudas, sin el item privado (#8)
+        "github": {"tiers": {**SEARCH_BODY, "items": [SEARCH_BODY["items"][0]]}},
     }
+
+
+@respx.mock
+def test_search_forwards_the_code_search_rate_limit(client: TestClient) -> None:
+    respx.get("https://api.github.com/search/code").mock(
+        return_value=httpx.Response(200, json=SEARCH_BODY, headers=RATE_LIMIT_HEADERS)
+    )
+
+    response = client.post("/api/search", json={"source": SORT_DICTIONARY})
+
+    # Con varias queries por busqueda, el cliente tiene que ver cuanto le queda
+    assert response.headers["x-ratelimit-remaining"] == "9"
+    assert response.headers["x-ratelimit-resource"] == "code_search"
+
+
+def test_the_search_response_is_typed_in_openapi(client: TestClient) -> None:
+    schema = client.get("/openapi.json").json()
+
+    ok = schema["paths"]["/api/search"]["post"]["responses"]["200"]
+    assert ok["content"]["application/json"]["schema"]["$ref"].endswith("/SearchResponse")
+    # #8 y #19 programan contra esto: los resultados con su rank y donde estan
+    response = schema["components"]["schemas"]["SearchResponse"]["properties"]
+    assert {"results", "github", "private_excluded"} <= response.keys()
+    result = schema["components"]["schemas"]["ResultOut"]["properties"]
+    assert {"rank", "score", "locations", "queries", "code"} <= result.keys()
+
+
+@respx.mock
+@pytest.mark.parametrize("max_results", [0, 51])
+def test_max_results_outside_one_to_fifty_is_a_422(client: TestClient, max_results: int) -> None:
+    route = respx.get("https://api.github.com/search/code").mock(
+        return_value=httpx.Response(200, json=SEARCH_BODY)
+    )
+
+    response = client.post(
+        "/api/search", json={"source": SORT_DICTIONARY, "max_results": max_results}
+    )
+
+    # Mas de 50 no se puede mostrar: es lo que llega a UniXcoder
+    assert response.status_code == 422
+    assert not route.called
 
 
 @respx.mock

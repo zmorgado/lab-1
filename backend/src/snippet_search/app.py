@@ -21,13 +21,13 @@ from typing import Annotated, Any, AsyncGenerator
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
-from pydantic import BaseModel, Field
 
 from .ast_grep_tags import SUPPORTED_LANGUAGES, Tiers, extract_tags
 from .config import Settings, load_settings
 from .github import GitHubClient, GitHubError, RateLimit
 from .llm_tags import GeminiTagService, LlmTagError
 from .pipeline import Ranker, SearchError, search, unixcoder_rank
+from .search_api import SearchRequest, SearchResponse
 from .tags_api import TagsDep, TagsRequest, TagsResponse, handle_llm_tag_error
 
 # 'owner/name', el formato que devuelve search/code en repository.full_name
@@ -56,13 +56,6 @@ def github_client(request: Request) -> GitHubClient:
 # globals del modulo. Una funcion anidada no esta ahi, asi que el parametro
 # terminaria tratado como query param en vez de como dependencia.
 GitHubDep = Annotated[GitHubClient, Depends(github_client)]
-
-
-class SearchRequest(BaseModel):
-    source: str = Field(description="The pasted snippet, as text")
-    language: str = Field(
-        default="python", description="Only Python for now; case-insensitive"
-    )
 
 
 def create_app(settings: Settings | None = None, rank: Ranker = unixcoder_rank) -> FastAPI:
@@ -137,20 +130,28 @@ def create_app(settings: Settings | None = None, rank: Ranker = unixcoder_rank) 
         )
 
     @app.post("/api/search")
-    async def run_search(github: GitHubDep, tags: TagsDep, payload: SearchRequest) -> Response:
+    async def run_search(
+        github: GitHubDep, tags: TagsDep, payload: SearchRequest, response: Response
+    ) -> SearchResponse:
         outcome = await search(
-            github, payload.source, payload.language, llm=tags, rank=rank
+            github,
+            payload.source,
+            payload.language,
+            llm=tags,
+            rank=rank,
+            max_results=payload.max_results,
         )
-        return JSONResponse(
-            content=outcome.as_dict(), headers=_rate_limit_headers(outcome.rate_limit)
-        )
+        # Los headers van por el Response inyectado: asi el body sale validado
+        # contra SearchResponse y queda tipado en /openapi.json (#35)
+        response.headers.update(_rate_limit_headers(outcome.rate_limit))
+        return SearchResponse.model_validate(outcome.as_dict())
 
     @app.post("/api/tags")
     async def extract_tags(tags: TagsDep, payload: TagsRequest) -> TagsResponse:
         result = await tags.extract(
             payload.source, language=payload.language, tiers=_seed_tiers(payload)
         )
-        return TagsResponse(language=result.language, tags=result.as_list())
+        return TagsResponse.model_validate({"language": result.language, "tags": result.as_list()})
 
     @app.get("/api/contents", response_class=PlainTextResponse)
     async def get_file_contents(

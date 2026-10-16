@@ -118,9 +118,6 @@ class Agent[T: AgentData](ABC):
 
 '''
 
-TOP_CANDIDATES = 10
-
-
 async def main(source: str) -> None:
     settings = load_settings()
     if not settings.gemini_api_key:
@@ -137,14 +134,16 @@ async def main(source: str) -> None:
     print(f"rejected: {outcome.rejected}")
     for skipped in outcome.skipped:
         print(f"skipped:  {skipped.repo}/{skipped.path}: {skipped.reason}")
+    print(f"private:  {outcome.private_excluded} excluded")
 
-    print(f"\n{len(outcome.candidates)} candidates, top {TOP_CANDIDATES}:")
-    for candidate in outcome.candidates[:TOP_CANDIDATES]:
-        subtree = candidate.subtree
+    print(f"\n{len(outcome.results)} results, out of {len(outcome.candidates)} scored:")
+    for result in outcome.results:
+        first, *others = result.locations
+        also = f"  (+{len(others)} repos)" if others else ""
         print(
-            f"  {candidate.score:.3f}  {candidate.repo}/{candidate.path}"
-            f":{subtree.start_line}-{subtree.end_line}  {subtree.name}  {list(subtree.anchors)}"
-            f"  queries={list(candidate.queries)}"
+            f"  #{result.rank} {result.score:.3f}  {first.repo}/{first.path}"
+            f":{result.start_line}-{result.end_line}  {result.name}{also}"
+            f"  queries={[query.kind for query in result.queries]}"
         )
 
 

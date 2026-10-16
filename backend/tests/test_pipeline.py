@@ -27,6 +27,7 @@ from snippet_search.llm_tags import (
     TagSet,
 )
 from snippet_search.pipeline import QUERY_TIERS, search
+from snippet_search.results import Result
 
 from conftest import SETTINGS
 
@@ -121,6 +122,11 @@ class StubLlm:
         return self.tags
 
 
+def kinds(result: Result) -> tuple[str, ...]:
+    """Los tipos de query que encontraron el archivo de un resultado."""
+    return tuple(query.kind for query in result.queries)
+
+
 class StubRanker:
     """Puntua por largo del codigo: determinista y distinto para cada candidato."""
 
@@ -148,17 +154,32 @@ async def test_a_full_run_ranks_the_surviving_subtrees(github: GitHubClient) -> 
 
     # El archivo se pidio en el commit que dio search/code
     assert contents.calls.last.request.url.params["ref"] == REF
-    assert {c.subtree.name for c in outcome.candidates} == {
+    assert {r.name for r in outcome.results} == {
         "bisect_left", "bisect_right", "insort_left", "insort_right",
     }
-    # Ordenados por score, de mayor a menor
-    scores = [c.score for c in outcome.candidates]
+    # Ordenados por score, de mayor a menor, y numerados
+    scores = [r.score for r in outcome.results]
     assert scores == sorted(scores, reverse=True)
-    assert outcome.candidates[0].repo == "example-org/sorting-utils"
+    assert [r.rank for r in outcome.results] == [1, 2, 3, 4]
+    assert outcome.results[0].locations[0].repo == "example-org/sorting-utils"
     # UniXcoder recibe el snippet y el codigo de cada subarbol
     query, snippets = rank.calls[0]
     assert query.startswith("def insert_sorted")
     assert all(snippet.startswith("def ") for snippet in snippets)
+
+
+@respx.mock
+async def test_the_user_picks_how_many_results_come_back(github: GitHubClient) -> None:
+    mock_search(SORTING)
+    mock_contents(SORTING, "cpython_bisect")
+
+    outcome = await search(
+        github, INSERT_SORTED, "python", llm=StubLlm(), rank=StubRanker(), max_results=2
+    )
+
+    assert [r.rank for r in outcome.results] == [1, 2]
+    # Se puntuaron los cuatro: el corte es solo de lo que se muestra
+    assert len(outcome.candidates) == 4
 
 
 @respx.mock
@@ -176,12 +197,14 @@ async def test_files_that_cannot_be_used_are_skipped_with_a_reason(github: GitHu
     reasons = {skipped.repo: skipped.reason for skipped in outcome.skipped}
     assert reasons == {
         "example-org/django-template": "syntax error at line 1: not valid Python",
-        "example-org/private-sorting": "private repository",
         "example-org/gone": "GitHub 404: Not Found",
     }
-    # El privado ni se pide; el resto de la corrida sigue
+    # El privado ni se pide ni se nombra (#8): solo se cuenta
     assert not private.called
-    assert {c.repo for c in outcome.candidates} == {"example-org/sorting-utils"}
+    assert outcome.private_excluded == 1
+    assert {loc.repo for r in outcome.results for loc in r.locations} == {
+        "example-org/sorting-utils"
+    }
 
 
 @respx.mock
@@ -246,7 +269,7 @@ async def test_files_found_by_more_queries_are_fetched_first(
     outcome = await search(github, INSERT_SORTED, "python", llm=StubLlm(TWO_KINDS), rank=StubRanker())
 
     assert not template.called
-    assert {c.queries for c in outcome.candidates} == {(KIND_SYNTACTIC, KIND_CONCEPTUAL)}
+    assert {kinds(r) for r in outcome.results} == {(KIND_SYNTACTIC, KIND_CONCEPTUAL)}
 
 
 @respx.mock
@@ -265,7 +288,9 @@ async def test_the_same_content_in_two_repos_is_one_file_fetched_from_the_public
     # Mismo sha: un solo archivo, encontrado por las dos queries, y se baja del publico
     assert not private.called
     assert outcome.skipped == ()
-    assert {(c.repo, c.queries) for c in outcome.candidates} == {
+    # Tiene copia publica, asi que no cuenta como privado excluido
+    assert outcome.private_excluded == 0
+    assert {(r.locations[0].repo, kinds(r)) for r in outcome.results} == {
         ("example-org/sorting-utils", (KIND_SYNTACTIC, KIND_CONCEPTUAL))
     }
 
@@ -288,7 +313,7 @@ async def test_a_failing_query_does_not_sink_the_others(github: GitHubClient) ->
         KIND_SYNTACTIC: "GitHub 422: Validation Failed",
         KIND_CONCEPTUAL: None,
     }
-    assert {c.queries for c in outcome.candidates} == {(KIND_CONCEPTUAL,)}
+    assert {kinds(r) for r in outcome.results} == {(KIND_CONCEPTUAL,)}
 
 
 @respx.mock
@@ -317,7 +342,7 @@ async def test_a_failing_llm_leaves_the_run_on_grep_tags(github: GitHubClient) -
         (QUERY_TIERS, outcome.tiers.ordered())
     ]
     assert outcome.anchors == ("insert", "insert_sorted")
-    assert len(outcome.candidates) == 4
+    assert len(outcome.results) == 4
 
 
 @respx.mock
@@ -328,7 +353,7 @@ async def test_nothing_surviving_skips_the_model(github: GitHubClient) -> None:
 
     outcome = await search(github, INSERT_SORTED, "python", llm=StubLlm(), rank=rank)
 
-    assert outcome.candidates == ()
+    assert outcome.results == ()
     assert rank.calls == []
 
 
