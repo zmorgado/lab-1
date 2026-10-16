@@ -13,8 +13,9 @@ see the stack decision on #3 for why it is Python rather than Node/TS:
 #3 landed the first two endpoints and the app skeleton (FastAPI + uvicorn). #21
 landed the embedding stage as a library. #7 added the LLM tags, and #4 the grep
 tags with the general search endpoint. #20 added the AST stage and wired every
-stage into one run behind `/api/search`. Query building in the backend (#19), the
-result mapper (#8) and error codes (#9) are still to come. Issue #1 is the spec.
+stage into one run behind `/api/search`, and #8 turned its output into the ranked
+result list. The frontend side of #19 and error codes (#9) are still to come.
+Issue #1 is the spec.
 
 ## Layout
 
@@ -94,7 +95,7 @@ Enterprise, or a fake in tests).
 | `GET /health` | `{"status": "ok"}` |
 | `GET /api/search/code?q=&per_page=&page=` | GitHub's `search/code` response **unchanged** |
 | `GET /api/contents?repo=&path=&ref=` | the file's source as `text/plain` |
-| `POST /api/search` | the full run: tags, query, ranked AST subtrees, and GitHub's results (see below) |
+| `POST /api/search` | the full run: tags, queries, the ranked results (#8) and GitHub's raw bodies (see below) |
 
 The proxy endpoints are a thin pass-through: they attach the credential and
 forward. They do not build queries or reshape results (#8), and GitHub's error
@@ -164,15 +165,16 @@ with the `.pth` quirk above, prefix it with `PYTHONPATH=src`.
 Endpoints follow the user's steps, not the internal stages. The stages are plain
 modules that don't know each other, and `pipeline.py` chains them, so the route
 stays thin. Every later stage plugs into `pipeline.search()`, not into a new
-endpoint: the user's edited tag list (#22), filters (#19) and the ranked result
-shape (#8).
+endpoint: the user's edited tag list (#22) and filters (#19).
 
 | Module | Stage |
 | --- | --- |
 | `ast_grep_tags.py` | 1: `extract_tags(snippet)` → `Tiers`, the candidates in three tiers. Python only |
 | `query.py` | 3: `build_query(tags, language)` → `SearchQuery` or `NothingToSearch` |
 | `ast_subtrees.py` | 4: `analyze_snippet(snippet)` → `SnippetShape`; `isolate(file, shape, anchors)` → `Isolation` |
-| `pipeline.py` | `search(github, source, language, llm=, rank=)`: the whole run, below |
+| `results.py` | After 5: `merge_files(bodies, limit)` → files by `sha`, no private repos; `to_results(candidates, query_text, max_results)` → `Result`s |
+| `pipeline.py` | `search(github, source, language, llm=, rank=, max_results=)`: the whole run, below |
+| `search_api.py` | `/api/search`'s request and response models, typed in `/openapi.json` |
 
 Tags come in three tiers, APIs (imports and calls), then structures (own
 `def`/`class` names and `lambda`), then a few docstring words. Keywords, generic
@@ -184,7 +186,7 @@ quotes multi-word tags, so #22 can feed it the merged and edited list.
 The run: AST tiers → LLM list (#7, #22) → one `search/code` query per kind of
 tag (#19) → files merged → each file through `/repos/{repo}/contents/{path}` at
 the commit the search returned → AST → UniXcoder over at most
-`MAX_EMBEDDED_SUBTREES` (50, #18's ceiling) → sorted by cosine.
+`MAX_EMBEDDED_SUBTREES` (50, #18's ceiling) → ranked results (#8).
 
 - **Queries.** The LLM gets the AST tiers and returns tags of three kinds:
   `syntactic`, `conceptual` and `paradigm`. Each kind becomes one query through
@@ -196,31 +198,44 @@ the commit the search returned → AST → UniXcoder over at most
   secondary rate limits. Each search spends one code-search request per query,
   out of 10 per minute. A query that fails is reported in its `error` and the
   rest go on; the search fails only when all of them do.
-- **Merge.** Results are merged on blob `sha`, keeping a public copy over a
-  private one. Files found by more queries go first, then by their best position
-  in GitHub's results, and only the first `MAX_CANDIDATE_FILES` (20) are fetched,
-  the same budget as one query. The same count orders subtrees for the embedding
-  budget; the final order is still cosine. Each candidate lists the queries that
-  found its file.
+- **Merge.** `results.merge_files` merges the hits on blob `sha`. Private copies
+  never enter: a content with a public copy is fetched and listed from its public
+  repos, and one found only in private repos is dropped and counted in
+  `private_excluded`. Files found by more queries go first (a query that only saw
+  a private copy still counts), then by their best position in GitHub's results,
+  and only the first `MAX_CANDIDATE_FILES` (20) are fetched, the same budget as
+  one query. The same count orders subtrees for the embedding budget.
+- **Results (#8).** `results.to_results` sorts by cosine, breaks ties by repo,
+  path and line, numbers the ranks from 1 and cuts at `max_results`. That's a
+  request field from 1 to 50 (no more than reach UniXcoder), 10 by default. Each
+  result lists every public repo with its content and the queries that found its
+  file. Nothing surviving gives an explicit `[]`.
 
 ```
-POST /api/search   {"source": "...", "language": "python"}   # language optional
+POST /api/search   {"source": "...", "language": "python", "max_results": 10}
+                   # language and max_results optional
 → {"tiers": {"apis": [...], "structures": [...], "domain": [...]},
    "queries": [{"kind": "syntactic", "tags": [...], "q": "... language:python",
                 "error": null}, ...],
    "llm": {"tags": [{"tag", "kind", "source"}] | null, "error": "llm_unavailable" | null},
    "snippet": {"category": "function", "fallback": false, "lines": 4},
    "anchors": [...],
-   "candidates": [{"repo", "path", "sha", "html_url", "score", "queries",
-                   "code", "kind", "name", "parent", "start_line", "end_line", "anchors"}],
+   "results": [{"rank", "score", "sha",
+                "locations": [{"repo", "path", "html_url"}],
+                "queries": [{"kind", "q"}],
+                "name", "node", "parent", "start_line", "end_line", "code"}],
    "rejected": {"A": 0, "C": 0, "B": 0, "length": 0, "budget": 0},
    "skipped": [{"repo", "path", "reason"}],
-   "results": {"syntactic": <search/code body, unchanged>, ...}}
+   "private_excluded": 0,
+   "github": {"syntactic": <search/code body, without private items>, ...}}
 ```
 
-The shape is raw on purpose: #8 turns `candidates` into the result list (every
-repo a content appeared in, result ceiling). Private hits are never fetched;
-unless the same content is public, they show up in `skipped`.
+The response is typed: `SearchResponse` (`search_api.py`) shows up in
+`/openapi.json`, and the route validates against it. Private repos are never
+named, not in `results`, not in `skipped`, and their items are removed from
+`github`; `private_excluded` only counts them. The bare proxy
+(`GET /api/search/code`) still returns GitHub's body unchanged, private items
+included.
 
 Both errors are 422s with a stable `code`, as in #7, and neither reaches GitHub:
 `nothing_to_search` (no usable tags) and `unsupported_language`. Filters (owner,
@@ -230,7 +245,8 @@ Verify it end to end against the real API, with the server running:
 
 ```
 jq -Rs '{source: .}' some_snippet.py | curl -s -X POST localhost:8000/api/search \
-  -H 'Content-Type: application/json' -d @- | jq '{queries, totals: (.results | map_values(.total_count))}'
+  -H 'Content-Type: application/json' -d @- \
+  | jq '{queries, results: [.results[] | {rank, score, name}], totals: (.github | map_values(.total_count))}'
 ```
 
 ## AST stage (#20)
@@ -308,8 +324,7 @@ POST /api/tags   {"source": "...", "language": "Python"}   # language optional
 Each kind holds at most 6 tags (`MAX_TAGS_PER_KIND`), one query's worth.
 
 **Provider**: Google Gemini (`gemini-3.8-flash`) over plain REST with `httpx`. The
-free tier needs no card, takes a JSON schema for the response and lets thinking be
-switched off. Key at <https://aistudio.google.com/apikey>; limits change, read
+free tier needs no card, takes a JSON schema for the response. No `thinkingConfig` is sent: `thinkingBudget` is a 400 on the 3.x models. Key at <https://aistudio.google.com/apikey>; limits change, read
 <https://ai.google.dev/gemini-api/docs/rate-limits>. Under the free-tier
 [terms](https://ai.google.dev/gemini-api/terms) Google may use the content sent to
 improve its products: fine for public code pasted into a search engine, not for

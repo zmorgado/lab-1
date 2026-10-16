@@ -3,8 +3,8 @@
 Las etapas son modulos sueltos que no se conocen entre si; este modulo las
 encadena para que el endpoint quede fino. Hoy corre todo: tags del AST (#4) y
 del LLM (#7), una query de search/code por tipo de tag (#19), los archivos de
-cada resultado (#3), el AST (#20) y los embeddings (#21). Faltan los tags
-editados (#22), los filtros (#19) y el formato final de resultados (#8).
+cada resultado (#3), el AST (#20), los embeddings (#21) y la lista de
+resultados (#8). Faltan los tags editados (#22) y los filtros (#19).
 """
 
 from __future__ import annotations
@@ -21,6 +21,16 @@ from .github import GitHubClient, GitHubError, RateLimit
 from .ast_grep_tags import SUPPORTED_LANGUAGES, Tiers, extract_tags
 from .llm_tags import KINDS, LlmTagError, TagSet
 from .query import SearchQuery, build_query
+from .results import (
+    DEFAULT_MAX_RESULTS,
+    Candidate,
+    MergedFile,
+    Result,
+    merge_files,
+    repo_of,
+    to_results,
+    without_private,
+)
 
 # Codigos estables, como los de #7: en los dos casos no se llega a buscar
 ERROR_NOTHING_TO_SEARCH: Final = "nothing_to_search"
@@ -59,20 +69,6 @@ class SearchError(Exception):
 
 
 @dataclass(frozen=True)
-class Candidate:
-    """Un subarbol que llego a los embeddings, con el archivo del que salio."""
-
-    repo: str
-    path: str
-    sha: str
-    html_url: str | None
-    subtree: Subtree
-    score: float
-    # Las queries que encontraron su archivo
-    queries: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
 class Skipped:
     repo: str
     path: str
@@ -100,8 +96,13 @@ class SearchOutcome:
     llm_tags: TagSet | None
     llm_error: str | None
     anchors: tuple[str, ...]
+    # Lo que ve el usuario (#8)
+    results: tuple[Result, ...] = ()
+    # Los subarboles con score, sin ordenar ni cortar: para debuggear
     candidates: tuple[Candidate, ...] = ()
     skipped: tuple[Skipped, ...] = ()
+    # Contenidos que solo estaban en repos privados: se cuentan, no se nombran
+    private_excluded: int = 0
     rejected: dict[str, int] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
@@ -117,21 +118,12 @@ class SearchOutcome:
             },
             "snippet": asdict(self.snippet),
             "anchors": list(self.anchors),
-            "candidates": [
-                {
-                    "repo": c.repo,
-                    "path": c.path,
-                    "sha": c.sha,
-                    "html_url": c.html_url,
-                    "score": c.score,
-                    "queries": list(c.queries),
-                    **asdict(c.subtree),
-                }
-                for c in self.candidates
-            ],
+            "results": [asdict(r) for r in self.results],
             "rejected": self.rejected,
             "skipped": [asdict(s) for s in self.skipped],
-            "results": {r.kind: r.body for r in self.queries},
+            "private_excluded": self.private_excluded,
+            # Las respuestas crudas de search/code, sin los items privados
+            "github": {r.kind: without_private(r.body) for r in self.queries},
         }
 
 
@@ -142,8 +134,10 @@ async def search(
     *,
     llm: TagExtractor,
     rank: Ranker,
+    max_results: int = DEFAULT_MAX_RESULTS,
 ) -> SearchOutcome:
-    """Del snippet pegado a los subarboles de GitHub, ordenados por coseno."""
+    """Del snippet pegado a los resultados (#8): subarboles de GitHub ordenados
+    por coseno, hasta `max_results`."""
     normalized = language.lower()
     if normalized not in SUPPORTED_LANGUAGES:
         raise SearchError(
@@ -180,13 +174,15 @@ async def search(
     #[TAGS ANCLAS] -> pruning de los resultados de github search code. REQUERIMIENTOS: mayor nivel de espeficididad (sumar tags o reemplazar de los TAGS busqueda)
 
     runs, rate_limit = await _run_queries(github, queries)
-    items, found_by = _merge(runs)
+    files, private_excluded = merge_files(
+        [(run.kind, run.body) for run in runs], MAX_CANDIDATE_FILES
+    )
 
     # En serie a proposito, como las queries: GitHub pide no mandarle requests
     # concurrentes, para no pisar el limite secundario
     fetched = []
-    for item in items:
-        fetched.append(await _fetch(github, item))
+    for file in files:
+        fetched.append(await _fetch(github, file))
 
     # Las anclas del criterio B: APIs y estructuras del AST, y toda la lista del
     # LLM (lo conceptual y las alternativas que ast_grep no ve)
@@ -197,11 +193,10 @@ async def search(
 
     # Sobre el techo pasan primero los de archivos que encontraron mas queries,
     # despues los que matchearon mas anclas; a igualdad, el orden del merge
-    found.sort(
-        key=lambda pair: (len(found_by[_key(pair[0])]), len(pair[1].anchors)), reverse=True
-    )
+    found.sort(key=lambda pair: (len(pair[0].queries), len(pair[1].anchors)), reverse=True)
     rejected["budget"] = max(0, len(found) - MAX_EMBEDDED_SUBTREES)
-    candidates = _rank(rank, source, found[:MAX_EMBEDDED_SUBTREES], found_by)
+    candidates = _rank(rank, source, found[:MAX_EMBEDDED_SUBTREES])
+    results = to_results(candidates, {run.kind: run.query.q for run in runs}, max_results)
 
     return SearchOutcome(
         tiers=tiers,
@@ -211,8 +206,10 @@ async def search(
         llm_tags=llm_tags,
         llm_error=llm_error,
         anchors=anchors,
-        candidates=tuple(candidates),
+        results=results,
+        candidates=candidates,
         skipped=tuple(skipped),
+        private_excluded=private_excluded,
         rejected=rejected,
     )
 
@@ -238,57 +235,46 @@ def _unixcoder() -> Any:
 
 
 def _isolate_files(
-    fetched: list[tuple[dict[str, Any], str | None, str | None]],
+    fetched: list[tuple[MergedFile, str | None, str | None]],
     snippet: SnippetShape,
     anchors: tuple[str, ...],
-) -> tuple[list[tuple[dict[str, Any], Subtree]], list[Skipped], dict[str, int]]:
+) -> tuple[list[tuple[MergedFile, Subtree]], list[Skipped], dict[str, int]]:
     """Corre el AST sobre cada archivo. Uno que no se trajo o no parsea se
     saltea con su motivo, sin cortar la corrida."""
-    found: list[tuple[dict[str, Any], Subtree]] = []
+    found: list[tuple[MergedFile, Subtree]] = []
     skipped: list[Skipped] = []
     rejected = {"A": 0, "C": 0, "B": 0, "length": 0, "budget": 0}
 
-    for item, code, reason in fetched:
+    for file, code, reason in fetched:
         if code is not None:
             try:
                 isolation = isolate(code, snippet, anchors)
             except UnparseableSource as error:
                 reason = str(error)
             else:
-                found.extend((item, subtree) for subtree in isolation.subtrees)
+                found.extend((file, subtree) for subtree in isolation.subtrees)
                 for criterion, count in isolation.rejected.items():
                     rejected[criterion] += count
         if reason is not None:
-            skipped.append(Skipped(_repo(item), item.get("path", ""), reason))
+            first = file.locations[0]
+            skipped.append(Skipped(first.repo, first.path, reason))
 
     return found, skipped, rejected
 
 
 def _rank(
-    rank: Ranker,
-    source: str,
-    found: list[tuple[dict[str, Any], Subtree]],
-    found_by: dict[str, tuple[str, ...]],
+    rank: Ranker, source: str, found: list[tuple[MergedFile, Subtree]]
 ) -> tuple[Candidate, ...]:
+    """Un coseno por subarbol. El orden y el corte son de to_results (#8)."""
     if not found:
         return ()
 
     # Futuro: UniXcoder bloquea el event loop mientras embebe; correrlo en un
     # thread con asyncio.to_thread (y volver async a _rank)
     scores = rank(textwrap.dedent(source).strip(), [subtree.code for _, subtree in found])
-    candidates = (
-        Candidate(
-            repo=_repo(item),
-            path=item.get("path", ""),
-            sha=item.get("sha", ""),
-            html_url=item.get("html_url"),
-            subtree=subtree,
-            score=score,
-            queries=found_by[_key(item)],
-        )
-        for (item, subtree), score in zip(found, scores)
+    return tuple(
+        Candidate(file, subtree, score) for (file, subtree), score in zip(found, scores)
     )
-    return tuple(sorted(candidates, key=lambda candidate: candidate.score, reverse=True))
 
 
 def _build_queries(
@@ -336,35 +322,6 @@ async def _run_queries(
     return runs, rate_limit
 
 
-def _merge(
-    runs: list[QueryRun],
-) -> tuple[list[dict[str, Any]], dict[str, tuple[str, ...]]]:
-    """Los archivos de todas las queries, uno por contenido (sha), y que
-    queries encontraron cada uno.
-
-    Van primero los que encontraron mas queries (#19); a igualdad, el mejor
-    puesto que les dio GitHub. El techo de archivos es el mismo que con una
-    sola query, asi que no se baja mas que antes.
-    """
-    items: dict[str, dict[str, Any]] = {}
-    kinds: dict[str, list[str]] = {}
-    best: dict[str, int] = {}
-    for run in runs:
-        for position, item in enumerate((run.body or {}).get("items", [])):
-            key = _key(item)
-            if key not in items:
-                items[key], kinds[key], best[key] = item, [], position
-            elif _is_private(items[key]) and not _is_private(item):
-                # El mismo contenido en un repo publico: ese si se puede bajar
-                items[key] = item
-            if run.kind not in kinds[key]:
-                kinds[key].append(run.kind)
-            best[key] = min(best[key], position)
-
-    order = sorted(items, key=lambda key: (-len(kinds[key]), best[key]))[:MAX_CANDIDATE_FILES]
-    return [items[key] for key in order], {key: tuple(kinds[key]) for key in order}
-
-
 async def _llm_tags(
     llm: TagExtractor, source: str, language: str, tiers: Tiers
 ) -> tuple[TagSet | None, str | None]:
@@ -376,37 +333,24 @@ async def _llm_tags(
 
 
 async def _fetch(
-    github: GitHubClient, item: dict[str, Any]
-) -> tuple[dict[str, Any], str | None, str | None]:
-    """El archivo de un resultado, o el motivo por el que no se pudo traer."""
-    if _is_private(item):
-        # Un solo token para todos: el codigo privado no sale de aca (#1)
-        return item, None, "private repository"
+    github: GitHubClient, file: MergedFile
+) -> tuple[MergedFile, str | None, str | None]:
+    """El archivo de un resultado, o el motivo por el que no se pudo traer.
 
+    Nunca llega uno privado: merge_files ya los dejo afuera (#8).
+    """
+    item = file.item
     ref = parse_qs(urlparse(item.get("url", "")).query).get("ref", [None])[0]
     if ref is None:
-        return item, None, "the search result carries no ref to fetch"
+        return file, None, "the search result carries no ref to fetch"
 
     try:
-        response = await github.get_file_contents(_repo(item), item.get("path", ""), ref)
+        response = await github.get_file_contents(repo_of(item), item.get("path", ""), ref)
     except GitHubError as error:
-        return item, None, _github_reason(error)
-    return item, response.body, None
+        return file, None, _github_reason(error)
+    return file, response.body, None
 
 
 def _github_reason(error: GitHubError) -> str:
     message = error.body.get("message") if isinstance(error.body, dict) else None
     return f"GitHub {error.status_code}: {message or 'no message'}"
-
-
-def _key(item: dict[str, Any]) -> str:
-    # El sha identifica el contenido: el mismo archivo en dos repos es uno solo
-    return item.get("sha") or f"{_repo(item)}/{item.get('path', '')}"
-
-
-def _is_private(item: dict[str, Any]) -> bool:
-    return bool(item.get("repository", {}).get("private"))
-
-
-def _repo(item: dict[str, Any]) -> str:
-    return item.get("repository", {}).get("full_name", "")
