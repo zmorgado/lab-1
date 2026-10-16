@@ -276,7 +276,9 @@ are the search's: `nothing_to_search` and `unsupported_language`.
 - the anchors are the snippet's AST `apis` and `structures`, recomputed since
   they are deterministic and free, plus every confirmed tag;
 - an empty tag, an unknown kind or a double quote (which would break `q`) is a
-  422 with `code: invalid_tag`, before GitHub is called. An empty list is
+  422 with `code: invalid_tag`, before GitHub is called, and so is `tiers` mixed
+  with the model's kinds: the `tiers` query replaces those three, and together
+  they would spend four code-search requests. An empty list is
   `nothing_to_search`.
 
 Without `tags`, the search runs the LLM itself as before, so plain curl usage

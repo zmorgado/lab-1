@@ -1,11 +1,10 @@
 import axios, { type AxiosResponse } from 'axios'
 import type { ErrorBody } from '@/jsons/ErrorBody'
 
-// Lo unico que la pagina sabe de un llamado fallido
+// Lo unico que la pagina sabe de un llamado fallido: el code estable del
+// backend, si mando uno, y el status, o null si no hubo respuesta
 export class ApiError extends Error {
-  // El code estable del backend, si mando uno
   readonly code: string | null
-  // null: no hubo respuesta
   readonly status: number | null
 
   constructor(code: string | null, status: number | null, options?: ErrorOptions) {

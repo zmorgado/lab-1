@@ -7,12 +7,12 @@ export const BUTTON =
   'inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-xs border px-4 py-2 ' +
   'font-mono text-xs transition-colors hover:border-pencil hover:text-ink'
 
-export default function Button({ primary = false, className = '', ...props }: ButtonProps) {
+export default function Button({ primary = false, ...props }: ButtonProps) {
   const tone = primary ? 'border-pencil text-ink' : 'border-rule text-pencil'
   return (
     <button
       type="button"
-      className={`${BUTTON} ${tone} disabled:cursor-not-allowed disabled:border-rule disabled:text-pencil disabled:opacity-60 ${className}`}
+      className={`${BUTTON} ${tone} disabled:cursor-not-allowed disabled:border-rule disabled:text-pencil disabled:opacity-60`}
       {...props}
     />
   )

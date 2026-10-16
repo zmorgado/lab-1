@@ -178,7 +178,7 @@ class SearchOutcome:
 async def preview(source: str, language: str, *, llm: TagExtractor) -> QueryPlan:
     """Las etapas 1 y 2 solas: los tags y las queries que correria `search()`,
     sin tocar GitHub (#38)."""
-    normalized = _supported(language)
+    normalized = _normalized_language(language)
 
     # TAGS: PART 1 (deterministic AST seed extraction, regex as fallback)
     tiers = extract_tags(source)
@@ -186,7 +186,7 @@ async def preview(source: str, language: str, *, llm: TagExtractor) -> QueryPlan
     # TAGS: PART 2 (LLM semantic expansion)
     llm_tags, llm_error = await _llm_tags(llm, source, normalized, tiers)
 
-    queries = _require(_build_queries(tiers, llm_tags, normalized))
+    queries = _searchable(_build_queries(tiers, llm_tags, normalized))
     llm_anchors = [tag.text for tag in llm_tags.tags] if llm_tags else []
     return QueryPlan(tiers, queries, _anchors(tiers, llm_anchors), llm_tags, llm_error)
 
@@ -327,7 +327,7 @@ def _rank(
     )
 
 
-def _supported(language: str) -> str:
+def _normalized_language(language: str) -> str:
     normalized = language.lower()
     if normalized not in SUPPORTED_LANGUAGES:
         raise SearchError(
@@ -337,7 +337,7 @@ def _supported(language: str) -> str:
     return normalized
 
 
-def _require(
+def _searchable(
     queries: list[tuple[str, SearchQuery]],
 ) -> tuple[tuple[str, SearchQuery], ...]:
     if not queries:
@@ -353,21 +353,40 @@ def _anchors(tiers: Tiers, extra: Sequence[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys([*tiers.apis, *tiers.structures, *extra]))
 
 
+def _queries_per_kind(
+    tags: Sequence[tuple[str, str]], kinds: Sequence[str], language: str
+) -> list[tuple[str, SearchQuery]]:
+    """(texto, tipo) -> una query por tipo, en el orden de `kinds`. Un tipo sin
+    nada buscable no arma query."""
+    queries: list[tuple[str, SearchQuery]] = []
+    for kind in kinds:
+        query = build_query([text for text, of_kind in tags if of_kind == kind], language)
+        if isinstance(query, SearchQuery):
+            queries.append((kind, query))
+    return queries
+
+
 def _confirmed_plan(source: str, language: str, tags: Sequence[ConfirmedTag]) -> QueryPlan:
     """Una query por tipo con los tags que confirmo el usuario. Los tiers se
     recalculan: son deterministicos y no cuestan nada."""
-    normalized = _supported(language)
-    texts = [_checked(tag) for tag in tags]
-    queries: list[tuple[str, SearchQuery]] = []
-    for kind in TAG_KINDS:
-        query = build_query([text for text, tag in zip(texts, tags) if tag.kind == kind], normalized)
-        if isinstance(query, SearchQuery):
-            queries.append((kind, query))
+    normalized = _normalized_language(language)
+    texts = [_valid_text(tag) for tag in tags]
+    kinds = {tag.kind for tag in tags}
+    # La query de tiers reemplaza a las del LLM: juntas pasarian las tres
+    # requests de code search que gasta una busqueda
+    if QUERY_TIERS in kinds and len(kinds) > 1:
+        raise SearchError(
+            f"Tags of kind {QUERY_TIERS!r} can't be mixed with {', '.join(KINDS)}.",
+            ERROR_INVALID_TAG,
+        )
+    queries = _queries_per_kind(
+        [(text, tag.kind) for text, tag in zip(texts, tags)], TAG_KINDS, normalized
+    )
     tiers = extract_tags(source)
-    return QueryPlan(tiers, _require(queries), _anchors(tiers, texts))
+    return QueryPlan(tiers, _searchable(queries), _anchors(tiers, texts))
 
 
-def _checked(tag: ConfirmedTag) -> str:
+def _valid_text(tag: ConfirmedTag) -> str:
     """El texto del tag, o un 422 antes de llamar a GitHub."""
     text = tag.text.strip()
     if not text:
@@ -395,14 +414,10 @@ def _build_queries(
 
     Sin LLM, o si no dejo nada buscable, una sola query con los tiers (#1).
     """
-    queries: list[tuple[str, SearchQuery]] = []
     if llm_tags is not None:
-        for kind in KINDS:
-            query = build_query([t.text for t in llm_tags.tags if t.kind == kind], language)
-            if isinstance(query, SearchQuery):
-                queries.append((kind, query))
-    if queries:
-        return queries
+        tags = [(tag.text, tag.kind) for tag in llm_tags.tags]
+        if queries := _queries_per_kind(tags, KINDS, language):
+            return queries
     query = build_query(tiers.ordered(), language)
     return [(QUERY_TIERS, query)] if isinstance(query, SearchQuery) else []
 

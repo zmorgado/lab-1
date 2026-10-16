@@ -1,22 +1,22 @@
 @import 'tailwindcss';
 
 /* ============================================================
-   WHERE THE PALETTE LIVES
+   DONDE VIVE LA PALETA
 
-   The token block below is copied verbatim from zmorgado/portfolio
-   app/globals.css, as the intrusion detector's Demo does: identical
-   inks read as one system, nearly identical ones as a mistake.
+   El bloque de tokens de abajo es copia textual de zmorgado/portfolio
+   app/globals.css, como en la Demo del detector de intrusiones: tintas
+   identicas se leen como un solo sistema, casi identicas como un error.
 
-     ground   the paper the plate is printed on
-     ink      body text, and every structural stroke
-     pencil   secondary text, and ordinary/uneventful data
-     signal   the system acting — links, and flagged flows
-     alert    the correction — at most once per page, on the
-              thing that does not work
+     ground   el papel
+     ink      el texto y los trazos estructurales
+     pencil   texto secundario y datos sin novedad
+     signal   el sistema actuando: links
+     alert    la correccion: como mucho una vez por pagina, en lo
+              que no anduvo
 
-   zmorgado/portfolio docs/adr/0005-visual-direction-derived-from-the-marks.md
-   owns the palette: change it there, then copy the block down unchanged.
-   Nothing outside this file reaches for a raw colour or a font stack.
+   La paleta es de zmorgado/portfolio docs/adr/0005-visual-direction-
+   derived-from-the-marks.md: se cambia alla y se copia el bloque sin
+   tocarlo. Fuera de este archivo nada usa un color crudo ni una fuente.
    ============================================================ */
 
 :root {
@@ -70,12 +70,11 @@
 }
 
 /* ============================================================
-   Tailwind theme
+   Tema de Tailwind
 
-   The tokens reach Tailwind here and nowhere else. Its default
-   palette and font stacks are reset, so `text-slate-600` or
-   `font-sans` don't exist: the only colours are the five inks
-   and the rule, and the only families Spectral and Plex Mono.
+   Los tokens llegan a Tailwind aca y en ningun otro lado. Su
+   paleta y sus fuentes se resetean: `text-slate-600` y `font-sans`
+   no existen, solo las cinco tintas, el rule, Spectral y Plex Mono.
    ============================================================ */
 
 @theme {
@@ -86,7 +85,7 @@
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
     "Liberation Mono", monospace;
 
-  /* The portfolio's measure, and prose kept narrower than it */
+  /* El ancho del portfolio, y la prosa mas angosta */
   --container-page: 840px;
   --container-prose: 68ch;
 }
@@ -99,7 +98,7 @@
   --color-alert: var(--alert);
   --color-rule: var(--rule);
 
-  /* `transition-colors` moves on the portfolio's curve and timing */
+  /* `transition-colors` con la curva y el tiempo del portfolio */
   --default-transition-timing-function: var(--ease);
   --default-transition-duration: var(--duration);
 }
@@ -107,8 +106,8 @@
 /* ============================================================
    Base
 
-   Prose is set in the serif; the mono carries only data: code,
-   tags, paths, line ranges, scores, elapsed time.
+   La prosa va en la serif; la mono lleva solo datos: codigo,
+   tags, paths, rangos de lineas, scores, segundos.
    ============================================================ */
 
 @layer base {

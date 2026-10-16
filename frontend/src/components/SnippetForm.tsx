@@ -6,7 +6,6 @@ type SnippetFormProps = {
   snippet: string
   onChange: (snippet: string) => void
   onSubmit: () => void
-  // Mientras corre una espera, o despues de proponer los tags, el snippet no se edita
   locked: boolean
   showActions: boolean
 }

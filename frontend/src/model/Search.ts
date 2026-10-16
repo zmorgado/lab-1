@@ -47,12 +47,14 @@ export function toSearchOutcome(raw: SearchResponse): SearchOutcome {
         const sorted = subtrees.toSorted(
           (a, b) => b.cosine - a.cosine || byText(a.name, b.name) || a.startLine - b.startLine,
         )
-        return { path, best: sorted[0].cosine, subtrees: sorted }
+        return { path, bestCosine: sorted[0].cosine, subtrees: sorted }
       })
-      .sort((a, b) => b.best - a.best || byText(a.path, b.path))
-    return { repo, best: ordered[0].best, files: ordered }
+      .sort((a, b) => b.bestCosine - a.bestCosine || byText(a.path, b.path))
+    return { repo, bestCosine: ordered[0].bestCosine, files: ordered }
   })
-  return { repositories: repositories.sort((a, b) => b.best - a.best || byText(a.repo, b.repo)) }
+  return {
+    repositories: repositories.sort((a, b) => b.bestCosine - a.bestCosine || byText(a.repo, b.repo)),
+  }
 }
 
 // A igualdad de coseno, por nombre: el orden no depende del que llego primero

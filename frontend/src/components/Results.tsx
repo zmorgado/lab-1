@@ -29,7 +29,7 @@ export default function Results({ outcome, actions }: ResultsProps) {
         <div key={repository.repo} className="mt-8 border-t border-rule pt-6">
           <div className="flex flex-wrap items-baseline justify-between gap-x-4">
             <h3 className="font-mono text-base font-medium break-all">{repository.repo}</h3>
-            <p className="font-mono text-sm text-pencil">best cosine {repository.best.toFixed(3)}</p>
+            <p className="font-mono text-sm text-pencil">best cosine {repository.bestCosine.toFixed(3)}</p>
           </div>
           {repository.files.map(file => (
             <div key={file.path} className="mt-4">

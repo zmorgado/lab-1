@@ -9,7 +9,6 @@ const COPY = new Map<string, string>([
     'There is nothing distinctive enough in this snippet to search for. Paste a function or a class with names of its own.',
   ],
   ['unsupported_language', 'Only Python can be searched for now.'],
-  ['empty_source', 'The snippet is empty.'],
   ['invalid_tag', "One of the tags can't go into a search. Go back to the snippet and propose the tags again."],
 ])
 

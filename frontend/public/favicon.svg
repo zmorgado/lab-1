@@ -1,9 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
   <!--
-    Lines of code, one of them found. The inks are literals here because a
-    favicon is fetched as its own document and never sees the token layer in
-    src/index.css. They are the values in that file: if the palette moves,
-    these move with it by hand.
+    Lineas de codigo, una encontrada. Las tintas van literales porque el
+    favicon se pide como documento aparte y no ve los tokens de src/index.css.
+    Son los valores de ese archivo: si la paleta cambia, se cambian a mano.
   -->
   <style>
     .ground { fill: #fcfcfb }

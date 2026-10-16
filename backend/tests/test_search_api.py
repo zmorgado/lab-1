@@ -207,6 +207,22 @@ def test_an_invalid_confirmed_tag_is_a_422_before_github(client: TestClient, tag
 
 
 @respx.mock
+def test_ast_tags_mixed_with_the_models_are_a_422(client: TestClient) -> None:
+    github = respx.get(SEARCH_CODE).mock(return_value=httpx.Response(200, json=EMPTY_SEARCH))
+
+    response = client.post(
+        "/api/search",
+        json={"source": SNIPPET, "tags": [*CONFIRMED, {"tag": "lambda", "kind": "tiers"}]},
+    )
+
+    # La query de tiers reemplaza a las del modelo: juntas serian cuatro requests
+    # de code search, y una busqueda gasta como mucho tres
+    assert response.status_code == 422
+    assert response.json()["code"] == "invalid_tag"
+    assert not github.called
+
+
+@respx.mock
 def test_no_confirmed_tags_is_nothing_to_search(client: TestClient) -> None:
     github = respx.get(SEARCH_CODE).mock(return_value=httpx.Response(200, json=EMPTY_SEARCH))
 
