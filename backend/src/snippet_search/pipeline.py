@@ -23,8 +23,9 @@ from urllib.parse import parse_qs, urlparse
 from .ast_subtrees import SnippetShape, Subtree, UnparseableSource, analyze_snippet, isolate
 from .github import GitHubClient, GitHubError, RateLimit
 from .ast_grep_tags import SUPPORTED_LANGUAGES, Tiers, extract_tags
-from .llm_tags import KINDS, SOURCE_SEED, LlmTagError, TagSet
+from .llm_tags import KINDS, LlmTagError, TagSet
 from .query import SearchQuery, build_query
+from .tag_selection import QUERY_TIERS, PoolTag, select
 from .results import (
     DEFAULT_MAX_RESULTS,
     Candidate,
@@ -50,8 +51,6 @@ MAX_CANDIDATE_FILES: Final = 20
 # Techo K de subarboles que llegan a UniXcoder (#18, unixcoder-verificacion.md)
 MAX_EMBEDDED_SUBTREES: Final = 50
 
-# La unica query cuando el LLM no esta: sale de los tiers del AST (#1)
-QUERY_TIERS: Final = "tiers"
 # Los tipos que puede traer un tag confirmado: los del LLM y el de los tiers
 TAG_KINDS: Final[tuple[str, ...]] = (*KINDS, QUERY_TIERS)
 
@@ -88,16 +87,6 @@ class SelectedTag:
 
 
 @dataclass(frozen=True)
-class PoolTag:
-    """Un tag que se le ofrece al usuario (#22), y si va seleccionado de entrada."""
-
-    text: str
-    kind: str
-    source: str
-    selected: bool
-
-
-@dataclass(frozen=True)
 class QueryPlan:
     """Las etapas 1 y 2: las queries que va a correr la busqueda y las anclas
     del AST, antes de gastar presupuesto de GitHub."""
@@ -125,6 +114,7 @@ class QueryPlan:
             ],
             "queries": [self._query_out(kind, built.get(kind)) for kind in kinds],
             "llm": {"error": self.llm_error},
+            "is_fallback": self.tiers.is_fallback,
         }
 
     def _query_out(self, kind: str, query: SearchQuery | None) -> dict[str, Any]:
@@ -177,7 +167,11 @@ class SearchOutcome:
 
     def as_dict(self) -> dict[str, Any]:
         return {
-            "tiers": asdict(self.tiers),
+            "tiers": {
+                "apis": list(self.tiers.apis),
+                "structures": list(self.tiers.structures),
+                "domain": list(self.tiers.domain),
+            },
             "queries": [
                 {"kind": r.kind, "tags": list(r.query.tags), "q": r.query.q, "error": r.error}
                 for r in self.queries
@@ -220,7 +214,7 @@ async def preview(
     # TAGS: PART 2 (LLM semantic expansion)
     llm_tags, llm_error = await _llm_tags(llm, source, normalized, tiers)
 
-    pool = _default_pool(tiers, llm_tags, normalized)
+    pool = select(tiers, llm_tags, normalized)
     selected = tuple(SelectedTag(t.text, t.kind) for t in pool if t.selected)
     queries = _searchable(_queries_per_kind(selected, TAG_KINDS, normalized))
     llm_anchors = [tag.text for tag in llm_tags.tags] if llm_tags else []
@@ -441,20 +435,6 @@ def _valid_text(tag: SelectedTag) -> str:
             ERROR_INVALID_TAG,
         )
     return text
-
-
-def _default_pool(tiers: Tiers, llm_tags: TagSet | None, language: str) -> tuple[PoolTag, ...]:
-    """Los tags del LLM, cada uno a la query de su tipo (#19): sintactica,
-    conceptual y de paradigma. Un seed que el LLM descarto (un modulo interno
-    como 'ringr_agents') no entra en ninguna.
-
-    Sin LLM, o si no dejo nada buscable, los tiers, para una sola query (#1).
-    """
-    if llm_tags is not None:
-        pool = tuple(PoolTag(t.text, t.kind, t.source, True) for t in llm_tags.tags)
-        if _queries_per_kind([SelectedTag(t.text, t.kind) for t in pool], KINDS, language):
-            return pool
-    return tuple(PoolTag(text, QUERY_TIERS, SOURCE_SEED, True) for text in tiers.ordered())
 
 
 async def _run_queries(

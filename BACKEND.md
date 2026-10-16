@@ -174,6 +174,7 @@ because it is a step of its own for the user (#38).
 | Module | Stage |
 | --- | --- |
 | `ast_grep_tags.py` | 1: `extract_tags(snippet)` → `Tiers`, the candidates in three tiers. Python only |
+| `tag_selection.py` | 2: `select(tiers, llm_tags, language)` → the pool the user edits, weighted, with the default selection (#22) |
 | `query.py` | 3: `build_query(tags, language)` → `SearchQuery` or `NothingToSearch` |
 | `ast_subtrees.py` | 4: `analyze_snippet(snippet)` → `SnippetShape`; `isolate(file, shape, anchors)` → `Isolation` |
 | `results.py` | After 5: `merge_files(bodies, limit)` → files by `sha`, no private repos; `to_results(candidates, query_text, max_results)` → `Result`s |
@@ -263,7 +264,7 @@ request, and returns:
 
 - `pool`: every tag offered, with its `kind` (the query it feeds), its `source`
   (`seed` from the AST, `llm` from the model) and whether it is `selected` unless
-  the user changes it;
+  the user changes it. `tag_selection.select` builds it, below;
 - `queries`: per kind, the selected tags that fit the 6-tag and 256-character
   limits, the ones those limits `dropped`, and the `q` it would send (`null` when
   none fit). Nothing is truncated silently.
@@ -273,12 +274,38 @@ POST /api/search/preview   {"source": "...", "language": "python"}   # language 
 → {"pool": [{"tag": "sorted", "kind": "syntactic", "source": "seed", "selected": true}, ...],
    "queries": [{"kind": "syntactic", "tags": ["sorted", "items"], "dropped": [],
                 "q": "sorted items language:python"}, ...],
-   "llm": {"error": null}}
+   "llm": {"error": null},
+   "is_fallback": false}
 ```
 
 With the model unavailable it still answers 200, with one `tiers` query from the
-AST and the LLM's code in `llm.error` (the LLM is a complement, #1). Its errors
-are the search's: `nothing_to_search` and `unsupported_language`.
+AST and the LLM's code in `llm.error` (the LLM is a complement, #1).
+`is_fallback` says the snippet didn't parse and the regex extracted the AST tags.
+Its errors are the search's: `nothing_to_search` and `unsupported_language`.
+
+**The pool (#22).** `select` merges the AST seeds and the model's tags, without
+repeats (case-insensitive), into at most `POOL_SIZE` (20) tags, larger than a
+query on purpose. A weight orders it, lightest first, so whatever has to be cut
+keeps the distinctive tags. The AST tells the kinds of seed apart without
+guessing:
+
+| Weight | Seeds | Model tags without a seed |
+| --- | --- | --- |
+| 1, domain | the snippet's own `def`/`class` names, docstring words | `conceptual` |
+| 2, API | calls, `lambda` | `syntactic`, `paradigm` |
+| 3, import | imported modules (`Tiers.imports`) | |
+
+- **With the model**, its tags are all selected, each feeding the query of its
+  kind. The seeds it dropped fill the rest of the pool unselected, so an internal
+  module like `ringr_agents` only goes in if the user picks it. Each seed goes to
+  a group: names and calls `syntactic`, docstring words `conceptual`, `lambda` and
+  imports `paradigm`.
+- **Without it**, or when it leaves nothing searchable, every seed goes to the
+  `tiers` query by weight, and the ones that fit it are selected.
+
+The pool is the same whichever path extracted the seeds: `is_fallback` only
+records it. The weights are #22's decision, which put imports such as `math`
+behind the names and words that actually identify the code.
 
 Both routes take the user's selection in an optional `tags` field, one
 `{"tag", "kind"}` per tag, `kind` being `syntactic`, `conceptual`, `paradigm` or

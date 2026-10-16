@@ -77,6 +77,9 @@ class PreviewResponse(BaseModel):
     pool: list[PoolTagOut] = Field(description="Every tag offered; empty when `tags` were sent")
     queries: list[PreviewQueryOut]
     llm: PreviewLlmOut
+    is_fallback: bool = Field(
+        description="The snippet didn't parse, so the regex extracted the AST tags"
+    )
 
 
 # --- respuesta ---------------------------------------------------------------

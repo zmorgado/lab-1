@@ -285,7 +285,7 @@ def test_search_sends_the_reduced_query_to_search_code(client: TestClient) -> No
 
     assert (
         route.calls.last.request.url.params["q"]
-        == "sorted items sort_dictionary lambda language:python"
+        == "sort_dictionary sorted items lambda language:python"
     )
 
 
@@ -306,12 +306,12 @@ def test_search_returns_the_tags_alongside_githubs_results(client: TestClient) -
             "structures": ["sort_dictionary", "lambda"],
             "domain": [],
         },
-        # SETTINGS no tiene key de Gemini: una sola query, con los tiers
+        # SETTINGS no tiene key de Gemini: una sola query, con los tiers por peso (#22)
         "queries": [
             {
                 "kind": "tiers",
-                "tags": ["sorted", "items", "sort_dictionary", "lambda"],
-                "q": "sorted items sort_dictionary lambda language:python",
+                "tags": ["sort_dictionary", "sorted", "items", "lambda"],
+                "q": "sort_dictionary sorted items lambda language:python",
                 "error": None,
             }
         ],

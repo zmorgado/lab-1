@@ -60,15 +60,27 @@ def test_the_preview_offers_the_pool_and_the_queries_the_search_would_run(
 
     assert response.status_code == 200
     assert response.json() == {
-        "pool": _pool(
-            ("sorted", "syntactic", "seed"),
-            ("items", "syntactic", "seed"),
-            ("sort_by_value", "conceptual", "llm"),
-            ("ranking", "conceptual", "llm"),
-            ("dictionary", "conceptual", "seed"),
-            ("lambda", "paradigm", "seed"),
-            ("itemgetter", "paradigm", "llm"),
-        ),
+        # Por peso (#22): el dominio primero, las APIs despues. Los seeds que el
+        # modelo descarto se ofrecen sin seleccionar
+        "pool": [
+            *_pool(
+                ("sort_by_value", "conceptual", "llm"),
+                ("ranking", "conceptual", "llm"),
+                ("dictionary", "conceptual", "seed"),
+            ),
+            *_pool(
+                ("rank_dictionary_by_value", "syntactic", "seed"),
+                ("sort", "conceptual", "seed"),
+                ("python", "conceptual", "seed"),
+                selected=False,
+            ),
+            *_pool(
+                ("sorted", "syntactic", "seed"),
+                ("items", "syntactic", "seed"),
+                ("lambda", "paradigm", "seed"),
+                ("itemgetter", "paradigm", "llm"),
+            ),
+        ],
         "queries": [
             {
                 "kind": "syntactic",
@@ -90,6 +102,7 @@ def test_the_preview_offers_the_pool_and_the_queries_the_search_would_run(
             },
         ],
         "llm": {"error": None},
+        "is_fallback": False,
     }
     # El preview no gasta presupuesto de code search
     assert not github.called
@@ -103,12 +116,30 @@ def test_without_the_model_the_preview_offers_the_ast_query() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["llm"] == {"error": "llm_unavailable"}
-    assert [(query["kind"], query["tags"]) for query in body["queries"]] == [
-        ("tiers", ["sorted", "items", "rank_dictionary_by_value", "lambda", "sort", "python"])
+    # Por peso: el nombre propio y el dominio, despues las APIs. Los seis que
+    # entran en la query van seleccionados; el resto se ofrece
+    assert [(tag["tag"], tag["selected"]) for tag in body["pool"]] == [
+        ("rank_dictionary_by_value", True),
+        ("sort", True),
+        ("python", True),
+        ("dictionary", True),
+        ("sorted", True),
+        ("items", True),
+        ("lambda", False),
     ]
-    # El septimo no entra en la query, y se ve
-    assert body["queries"][0]["dropped"] == ["dictionary"]
     assert {tag["kind"] for tag in body["pool"]} == {"tiers"}
+    assert body["queries"][0]["dropped"] == []
+
+
+def test_the_preview_says_when_the_snippet_did_not_parse() -> None:
+    broken = 'def rank(items):\n    """Cosine ranking."""\n    return sorted(items\n'
+    with TestClient(create_app(BASE_SETTINGS, rank=no_model)) as client:
+        response = client.post("/api/search/preview", json={"source": broken})
+
+    # El regex rescata los tags igual, y el pool se arma como siempre (#22)
+    assert response.status_code == 200
+    assert response.json()["is_fallback"] is True
+    assert [tag["tag"] for tag in response.json()["pool"]] == ["rank", "cosine", "ranking", "sorted"]
 
 
 @respx.mock
@@ -137,6 +168,7 @@ def test_with_tags_the_preview_rebuilds_the_queries_without_the_model(client: Te
             {"kind": "conceptual", "tags": ["NOT"], "dropped": [], "q": '"NOT" language:python'},
         ],
         "llm": {"error": None},
+        "is_fallback": False,
     }
 
 
@@ -273,6 +305,7 @@ def test_the_preview_and_the_confirmed_tags_are_typed_in_openapi(client: TestCli
     assert {"tag", "kind", "source", "selected"} <= pool.keys()
     preview_request = schema["components"]["schemas"]["PreviewRequest"]["properties"]
     assert "tags" in preview_request
+    assert "is_fallback" in schema["components"]["schemas"]["PreviewResponse"]["properties"]
     request = schema["components"]["schemas"]["SearchRequest"]["properties"]
     assert "tags" in request
     assert {"tag", "kind"} <= schema["components"]["schemas"]["TagIn"]["properties"].keys()
