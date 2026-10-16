@@ -6,6 +6,7 @@ import respx
 from fastapi.testclient import TestClient
 
 from snippet_search.app import create_app
+from snippet_search.search_api import SearchRequest
 
 from conftest import RATE_LIMIT_HEADERS, SEARCH_BODY, SETTINGS
 
@@ -357,6 +358,11 @@ def test_the_search_response_is_typed_in_openapi(client: TestClient) -> None:
     assert {"results", "github", "private_excluded"} <= response.keys()
     result = schema["components"]["schemas"]["ResultOut"]["properties"]
     assert {"rank", "score", "locations", "queries", "code"} <= result.keys()
+
+
+def test_max_results_defaults_to_ten_and_accepts_the_limits() -> None:
+    assert SearchRequest(source="x").max_results == 10
+    assert [SearchRequest(source="x", max_results=n).max_results for n in (1, 50)] == [1, 50]
 
 
 @respx.mock

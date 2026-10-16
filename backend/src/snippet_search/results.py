@@ -126,7 +126,8 @@ def to_results(
 
 
 def _order(candidate: Candidate) -> tuple[float, str, str, int]:
-    first = candidate.file.locations[0] if candidate.file.locations else Location("", "", None)
+    # La menor ubicacion y no la primera: el orden de GitHub no tiene que decidir
+    first = min(candidate.file.locations, key=lambda loc: (loc.repo, loc.path))
     return (-candidate.score, first.repo, first.path, candidate.subtree.start_line)
 
 
@@ -157,16 +158,16 @@ def without_private(body: Any) -> Any:
 
 def _key(item: dict[str, Any]) -> str:
     # El sha identifica el contenido: el mismo archivo en dos repos es uno solo
-    return item.get("sha") or f"{_repo(item)}/{item.get('path', '')}"
+    return item.get("sha") or f"{repo_of(item)}/{item.get('path', '')}"
 
 
 def _location(item: dict[str, Any]) -> Location:
-    return Location(_repo(item), item.get("path", ""), item.get("html_url"))
+    return Location(repo_of(item), item.get("path", ""), item.get("html_url"))
 
 
 def _is_private(item: dict[str, Any]) -> bool:
     return bool(item.get("repository", {}).get("private"))
 
 
-def _repo(item: dict[str, Any]) -> str:
+def repo_of(item: dict[str, Any]) -> str:
     return item.get("repository", {}).get("full_name", "")

@@ -172,7 +172,7 @@ endpoint: the user's edited tag list (#22) and filters (#19).
 | `ast_grep_tags.py` | 1: `extract_tags(snippet)` → `Tiers`, the candidates in three tiers. Python only |
 | `query.py` | 3: `build_query(tags, language)` → `SearchQuery` or `NothingToSearch` |
 | `ast_subtrees.py` | 4: `analyze_snippet(snippet)` → `SnippetShape`; `isolate(file, shape, anchors)` → `Isolation` |
-| `results.py` | 5: `merge_files(bodies, limit)` → files by `sha`, no private repos; `to_results(candidates, query_text, max_results)` → `Result`s |
+| `results.py` | After 5: `merge_files(bodies, limit)` → files by `sha`, no private repos; `to_results(candidates, query_text, max_results)` → `Result`s |
 | `pipeline.py` | `search(github, source, language, llm=, rank=, max_results=)`: the whole run, below |
 | `search_api.py` | `/api/search`'s request and response models, typed in `/openapi.json` |
 

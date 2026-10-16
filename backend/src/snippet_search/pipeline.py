@@ -27,6 +27,7 @@ from .results import (
     MergedFile,
     Result,
     merge_files,
+    repo_of,
     to_results,
     without_private,
 )
@@ -255,7 +256,8 @@ def _isolate_files(
                 for criterion, count in isolation.rejected.items():
                     rejected[criterion] += count
         if reason is not None:
-            skipped.append(Skipped(_repo(file.item), file.item.get("path", ""), reason))
+            first = file.locations[0]
+            skipped.append(Skipped(first.repo, first.path, reason))
 
     return found, skipped, rejected
 
@@ -343,7 +345,7 @@ async def _fetch(
         return file, None, "the search result carries no ref to fetch"
 
     try:
-        response = await github.get_file_contents(_repo(item), item.get("path", ""), ref)
+        response = await github.get_file_contents(repo_of(item), item.get("path", ""), ref)
     except GitHubError as error:
         return file, None, _github_reason(error)
     return file, response.body, None
@@ -352,7 +354,3 @@ async def _fetch(
 def _github_reason(error: GitHubError) -> str:
     message = error.body.get("message") if isinstance(error.body, dict) else None
     return f"GitHub {error.status_code}: {message or 'no message'}"
-
-
-def _repo(item: dict[str, Any]) -> str:
-    return item.get("repository", {}).get("full_name", "")
