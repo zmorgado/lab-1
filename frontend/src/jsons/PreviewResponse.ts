@@ -4,4 +4,6 @@ export type PreviewResponse = {
   pool: { tag: string; kind: string; source: 'seed' | 'llm'; selected: boolean }[]
   queries: { kind: string; dropped: string[] }[]
   llm: { error: string | null }
+  // El snippet no parseo: los tags del AST los saco el regex
+  is_fallback: boolean
 }

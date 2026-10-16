@@ -10,4 +10,6 @@ export type TagPreview = {
   groups: TagGroup[]
   // El code del modelo si fallo: los tags salen entonces solo del AST
   modelError: string | null
+  // El snippet no parseo y los tags del AST salieron de un escaneo de texto
+  textScan: boolean
 }

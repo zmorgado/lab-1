@@ -8,7 +8,7 @@ const KINDS = new Map([
   ['syntactic', { label: 'Syntactic', note: 'The names a near-literal copy would share.' }],
   ['conceptual', { label: 'Conceptual', note: 'What the code is for, in the words programmers use.' }],
   ['paradigm', { label: 'Paradigm', note: 'Other ways to write the same thing.' }],
-  [AST_KIND, { label: 'From the syntax tree', note: 'APIs first, then names, then docstring words.' }],
+  [AST_KIND, { label: 'From the syntax tree', note: 'Its own names and words first, then calls, then imports.' }],
 ])
 
 const SOURCE_LABELS = { ast: 'AST', model: 'model', you: 'you' } as const
@@ -50,6 +50,11 @@ export default function TagConfirmation({
           {preview.modelError
             ? 'The model was unavailable, so these tags come from the syntax tree alone, in one query instead of three.'
             : 'The model found nothing worth searching for, so these tags come from the syntax tree alone.'}
+        </p>
+      )}
+      {preview.textScan && (
+        <p className="mt-3 max-w-prose text-base text-pencil">
+          The snippet didn't parse as Python, so its AST tags come from a scan of the text instead.
         </p>
       )}
 
