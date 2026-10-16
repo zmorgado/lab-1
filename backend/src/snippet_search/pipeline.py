@@ -6,9 +6,9 @@ del LLM (#7), una query de search/code por tipo de tag (#19), los archivos de
 cada resultado (#3), el AST (#20), los embeddings (#21) y la lista de
 resultados (#8).
 
-Las etapas 1 y 2 tambien corren solas, en `preview()`: el usuario ve los tags
-antes de buscar y la busqueda corre con los que confirmo, sin volver a llamar al
-LLM (#38). Faltan los tags editados (#22) y los filtros (#19).
+Las etapas 1 y 2 tambien corren solas, en `preview()`: el usuario ve el pool de
+tags, elige y suma los suyos, y la busqueda corre con los que confirmo, sin
+volver a llamar al LLM (#38, #22). Faltan los filtros (#19).
 """
 
 from __future__ import annotations
@@ -41,6 +41,9 @@ ERROR_NOTHING_TO_SEARCH: Final = "nothing_to_search"
 ERROR_UNSUPPORTED_LANGUAGE: Final = "unsupported_language"
 # Un tag confirmado vacio, de un tipo que no existe o que romperia 'q' (#38)
 ERROR_INVALID_TAG: Final = "invalid_tag"
+
+# Un tag que escribe el usuario: mas largo no es un tag, y siempre entra solo en una query
+MAX_TAG_LENGTH: Final = 100
 
 # Archivos de search/code que se bajan y parsean: cada uno es un request a contents
 MAX_CANDIDATE_FILES: Final = 20
@@ -77,11 +80,21 @@ class SearchError(Exception):
 
 
 @dataclass(frozen=True)
-class ConfirmedTag:
-    """Un tag que el usuario confirmo en el preview, con la query que alimenta."""
+class SelectedTag:
+    """Un tag que entra a las queries, con la que alimenta."""
 
     text: str
     kind: str
+
+
+@dataclass(frozen=True)
+class PoolTag:
+    """Un tag que se le ofrece al usuario (#22), y si va seleccionado de entrada."""
+
+    text: str
+    kind: str
+    source: str
+    selected: bool
 
 
 @dataclass(frozen=True)
@@ -90,29 +103,38 @@ class QueryPlan:
     del AST, antes de gastar presupuesto de GitHub."""
 
     tiers: Tiers
+    selected: tuple[SelectedTag, ...]
     queries: tuple[tuple[str, SearchQuery], ...]
     # Las anclas del criterio B: APIs y estructuras del AST, y los tags que no
     # salen de el (los del LLM, o los confirmados)
     anchors: tuple[str, ...]
+    # Vacio si los tags ya vienen confirmados: el cliente tiene el pool
+    pool: tuple[PoolTag, ...] = ()
     llm_tags: TagSet | None = None
     llm_error: str | None = None
 
     def as_preview(self) -> dict[str, Any]:
-        """La forma que devuelve /api/search/preview: cada tag con su origen."""
-        sources = {t.text: t.source for t in self.llm_tags.tags} if self.llm_tags else {}
+        """La forma que devuelve /api/search/preview. Lo que no entro en una
+        query por el tope de tags o de largo se informa, no se pierde (#22)."""
+        built = dict(self.queries)
+        kinds = [kind for kind in TAG_KINDS if any(t.kind == kind for t in self.selected)]
         return {
-            "queries": [
-                {
-                    "kind": kind,
-                    "tags": [
-                        {"tag": tag, "source": sources.get(tag, SOURCE_SEED)}
-                        for tag in query.tags
-                    ],
-                    "q": query.q,
-                }
-                for kind, query in self.queries
+            "pool": [
+                {"tag": t.text, "kind": t.kind, "source": t.source, "selected": t.selected}
+                for t in self.pool
             ],
+            "queries": [self._query_out(kind, built.get(kind)) for kind in kinds],
             "llm": {"error": self.llm_error},
+        }
+
+    def _query_out(self, kind: str, query: SearchQuery | None) -> dict[str, Any]:
+        fitted = query.tags if query else ()
+        return {
+            "kind": kind,
+            "tags": list(fitted),
+            "dropped": [t.text for t in self.selected if t.kind == kind and t.text not in fitted],
+            # Sin nada que entre, ese tipo no corre query
+            "q": query.q if query else None,
         }
 
 
@@ -175,9 +197,21 @@ class SearchOutcome:
         }
 
 
-async def preview(source: str, language: str, *, llm: TagExtractor) -> QueryPlan:
-    """Las etapas 1 y 2 solas: los tags y las queries que correria `search()`,
-    sin tocar GitHub (#38)."""
+async def preview(
+    source: str,
+    language: str,
+    *,
+    llm: TagExtractor,
+    tags: Sequence[SelectedTag] | None = None,
+) -> QueryPlan:
+    """Las etapas 1 y 2 solas: el pool de tags y las queries que correria
+    `search()`, sin tocar GitHub (#38).
+
+    Con `tags` no llama al LLM: rearma las queries con esos, para que el
+    usuario vea que entra mientras edita (#22).
+    """
+    if tags is not None:
+        return _confirmed_plan(source, language, tags)
     normalized = _normalized_language(language)
 
     # TAGS: PART 1 (deterministic AST seed extraction, regex as fallback)
@@ -186,9 +220,13 @@ async def preview(source: str, language: str, *, llm: TagExtractor) -> QueryPlan
     # TAGS: PART 2 (LLM semantic expansion)
     llm_tags, llm_error = await _llm_tags(llm, source, normalized, tiers)
 
-    queries = _searchable(_build_queries(tiers, llm_tags, normalized))
+    pool = _default_pool(tiers, llm_tags, normalized)
+    selected = tuple(SelectedTag(t.text, t.kind) for t in pool if t.selected)
+    queries = _searchable(_queries_per_kind(selected, TAG_KINDS, normalized))
     llm_anchors = [tag.text for tag in llm_tags.tags] if llm_tags else []
-    return QueryPlan(tiers, queries, _anchors(tiers, llm_anchors), llm_tags, llm_error)
+    return QueryPlan(
+        tiers, selected, queries, _anchors(tiers, llm_anchors), pool, llm_tags, llm_error
+    )
 
 
 async def search(
@@ -199,7 +237,7 @@ async def search(
     llm: TagExtractor,
     rank: Ranker,
     max_results: int = DEFAULT_MAX_RESULTS,
-    tags: Sequence[ConfirmedTag] | None = None,
+    tags: Sequence[SelectedTag] | None = None,
 ) -> SearchOutcome:
     """Del snippet pegado a los resultados (#8): subarboles de GitHub ordenados
     por coseno, hasta `max_results`.
@@ -207,10 +245,7 @@ async def search(
     Con `tags`, los que el usuario confirmo en el preview, la busqueda corre
     sobre esos y no vuelve a llamar al LLM (#38).
     """
-    if tags is None:
-        plan = await preview(source, language, llm=llm)
-    else:
-        plan = _confirmed_plan(source, language, tags)
+    plan = await preview(source, language, llm=llm, tags=tags)
     tiers, queries, anchors = plan.tiers, plan.queries, plan.anchors
 
     snippet = analyze_snippet(source)
@@ -354,23 +389,23 @@ def _anchors(tiers: Tiers, extra: Sequence[str]) -> tuple[str, ...]:
 
 
 def _queries_per_kind(
-    tags: Sequence[tuple[str, str]], kinds: Sequence[str], language: str
+    tags: Sequence[SelectedTag], kinds: Sequence[str], language: str
 ) -> list[tuple[str, SearchQuery]]:
-    """(texto, tipo) -> una query por tipo, en el orden de `kinds`. Un tipo sin
-    nada buscable no arma query."""
+    """Una query por tipo, en el orden de `kinds`. Un tipo sin nada buscable no
+    arma query."""
     queries: list[tuple[str, SearchQuery]] = []
     for kind in kinds:
-        query = build_query([text for text, of_kind in tags if of_kind == kind], language)
+        query = build_query([tag.text for tag in tags if tag.kind == kind], language)
         if isinstance(query, SearchQuery):
             queries.append((kind, query))
     return queries
 
 
-def _confirmed_plan(source: str, language: str, tags: Sequence[ConfirmedTag]) -> QueryPlan:
+def _confirmed_plan(source: str, language: str, tags: Sequence[SelectedTag]) -> QueryPlan:
     """Una query por tipo con los tags que confirmo el usuario. Los tiers se
     recalculan: son deterministicos y no cuestan nada."""
     normalized = _normalized_language(language)
-    texts = [_valid_text(tag) for tag in tags]
+    selected = tuple(SelectedTag(_valid_text(tag), tag.kind) for tag in tags)
     kinds = {tag.kind for tag in tags}
     # La query de tiers reemplaza a las del LLM: juntas pasarian las tres
     # requests de code search que gasta una busqueda
@@ -379,18 +414,21 @@ def _confirmed_plan(source: str, language: str, tags: Sequence[ConfirmedTag]) ->
             f"Tags of kind {QUERY_TIERS!r} can't be mixed with {', '.join(KINDS)}.",
             ERROR_INVALID_TAG,
         )
-    queries = _queries_per_kind(
-        [(text, tag.kind) for text, tag in zip(texts, tags)], TAG_KINDS, normalized
-    )
+    queries = _queries_per_kind(selected, TAG_KINDS, normalized)
     tiers = extract_tags(source)
-    return QueryPlan(tiers, _searchable(queries), _anchors(tiers, texts))
+    anchors = _anchors(tiers, [tag.text for tag in selected])
+    return QueryPlan(tiers, selected, _searchable(queries), anchors)
 
 
-def _valid_text(tag: ConfirmedTag) -> str:
+def _valid_text(tag: SelectedTag) -> str:
     """El texto del tag, o un 422 antes de llamar a GitHub."""
     text = tag.text.strip()
     if not text:
         raise SearchError("A confirmed tag is empty.", ERROR_INVALID_TAG)
+    if len(text) > MAX_TAG_LENGTH:
+        raise SearchError(
+            f"A tag can be at most {MAX_TAG_LENGTH} characters long.", ERROR_INVALID_TAG
+        )
     if tag.kind not in TAG_KINDS:
         raise SearchError(
             f"Unknown tag kind {tag.kind!r}: expected one of {', '.join(TAG_KINDS)}.",
@@ -405,21 +443,18 @@ def _valid_text(tag: ConfirmedTag) -> str:
     return text
 
 
-def _build_queries(
-    tiers: Tiers, llm_tags: TagSet | None, language: str
-) -> list[tuple[str, SearchQuery]]:
-    """Una query por tipo de tag del LLM (#19): sintactica, conceptual y de
-    paradigma. Un seed que el LLM descarto (un modulo interno como
-    'ringr_agents') no entra en ninguna.
+def _default_pool(tiers: Tiers, llm_tags: TagSet | None, language: str) -> tuple[PoolTag, ...]:
+    """Los tags del LLM, cada uno a la query de su tipo (#19): sintactica,
+    conceptual y de paradigma. Un seed que el LLM descarto (un modulo interno
+    como 'ringr_agents') no entra en ninguna.
 
-    Sin LLM, o si no dejo nada buscable, una sola query con los tiers (#1).
+    Sin LLM, o si no dejo nada buscable, los tiers, para una sola query (#1).
     """
     if llm_tags is not None:
-        tags = [(tag.text, tag.kind) for tag in llm_tags.tags]
-        if queries := _queries_per_kind(tags, KINDS, language):
-            return queries
-    query = build_query(tiers.ordered(), language)
-    return [(QUERY_TIERS, query)] if isinstance(query, SearchQuery) else []
+        pool = tuple(PoolTag(t.text, t.kind, t.source, True) for t in llm_tags.tags)
+        if _queries_per_kind([SelectedTag(t.text, t.kind) for t in pool], KINDS, language):
+            return pool
+    return tuple(PoolTag(text, QUERY_TIERS, SOURCE_SEED, True) for text in tiers.ordered())
 
 
 async def _run_queries(
