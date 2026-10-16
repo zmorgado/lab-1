@@ -337,9 +337,10 @@ async def test_a_failing_llm_leaves_the_run_on_grep_tags(github: GitHubClient) -
     outcome = await search(github, INSERT_SORTED, "python", llm=llm, rank=StubRanker())
 
     assert outcome.llm_error == ERROR_LLM_QUOTA
-    # Sin LLM no hay tipos: una sola query con los tiers, como antes de #19
+    # Sin LLM no hay tipos: una sola query con los tiers, como antes de #19,
+    # ordenada por peso (#22): el nombre propio y el dominio antes que la API
     assert [(run.kind, run.query.tags) for run in outcome.queries] == [
-        (QUERY_TIERS, outcome.tiers.ordered())
+        (QUERY_TIERS, ("insert_sorted", "value", "into", "insert"))
     ]
     assert outcome.anchors == ("insert", "insert_sorted")
     assert len(outcome.results) == 4

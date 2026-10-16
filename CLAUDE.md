@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `main` carries everything: the design sources plus the code, since `feature/initial-frontend` was merged in PR #16. Two codebases sit side by side, with separate toolchains:
 
 - **`frontend/`** — the React + TypeScript + Vite frontend (`src/`, `package.json`, pnpm).
-- **`backend/`** — the Python service (`pyproject.toml`, uv). It will hold the whole pipeline: proxy, tag extraction, AST stage and embeddings. So far, in `src/snippet_search/`: the proxy from #3, the LLM tags from #7, the grep tags, query building and pipeline from #4, the UniXcoder embedding stage from #21 in `embeddings/`, the AST stage from #20 in `ast_subtrees.py`, which also wired every stage into one run behind `POST /api/search`, and the ranked result list from #8 in `results.py`.
+- **`backend/`** — the Python service (`pyproject.toml`, uv). It will hold the whole pipeline: proxy, tag extraction, AST stage and embeddings. So far, in `src/snippet_search/`: the proxy from #3, the LLM tags from #7, the grep tags, query building and pipeline from #4, the tag pool the user edits from #22 in `tag_selection.py`, the UniXcoder embedding stage from #21 in `embeddings/`, the AST stage from #20 in `ast_subtrees.py`, which also wired every stage into one run behind `POST /api/search`, and the ranked result list from #8 in `results.py`.
 - **`docs/research/`** — the design sources: ~~`solution-schematics-v2.md`~~, `multiple-snippet-sorting-solution.md`, `unixcoder-verificacion.md`, the reference PDFs, `discussion.txt`, `tests.md` and the `generacion-de-tags-query.py` sketch. Committed sources, not generated output — cite them rather than re-deriving.
 - **`docs/diagrams/`** — the architecture diagram (`lab-1.architecture.html`, generated from `lab-1.architecture.json`).
 - **`docs/agents/`** — how agent skills should use this repo's tracker, labels and domain docs.
@@ -73,7 +73,7 @@ uv run pytest
 A GitHub-backed search engine: paste a snippet, get back ranked code on GitHub that does the same thing. Five stages, each matching on something different ~~(`docs/research/solution-schematics-v2.md`)~~:
 
 1. **Tags** (#4, #7) — the GREP service pulls APIs, structures and domain words out of the snippet with regex. An LLM service names what the code *is*: algorithm, data structures, paradigm, calls. Grep is the baseline and works alone; the LLM is a complement.
-2. **Tag selection** (#22) — both tag sources merge into one tier-ordered list, and the user can drop tags or add their own before searching.
+2. **Tag selection** (#22) — both tag sources merge into one weighted pool of up to 20 (`tag_selection.py`: own names and docstring words, then calls, then imports), and the user picks tags and adds their own before searching.
 3. **Code search** (#3, #19) — the tags become a `search/code` query, run server-side through an authenticated proxy. Cheap and imprecise on purpose: it just cuts GitHub down to a handful of candidates.
 4. **AST** (#20) — the same GREP service parses the candidates, isolates subtrees by construct category, tag anchors and completeness, and prunes by length. It also produces the AST of the pasted snippet.
 5. **Embeddings** (#18, #21) — UniXcoder embeds the snippet and the surviving candidates; cosine similarity ranks them. This is where "different text, same function" gets caught.
