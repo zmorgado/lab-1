@@ -61,31 +61,49 @@ describe('attaching a snippet', () => {
 
 const API = 'http://127.0.0.1:8000'
 
+type SentTag = { tag: string; kind: string }
+
+const pooled = (kind: string, source: 'seed' | 'llm', ...tags: string[]) =>
+  tags.map(tag => ({ tag, kind, source, selected: true }))
+
 const PREVIEW = {
+  pool: [
+    ...pooled('syntactic', 'seed', 'sorted', 'items'),
+    ...pooled('conceptual', 'llm', 'sort_by_value', 'ranking'),
+    ...pooled('paradigm', 'llm', 'itemgetter'),
+  ],
   queries: [
-    {
-      kind: 'syntactic',
-      tags: [
-        { tag: 'sorted', source: 'seed' },
-        { tag: 'items', source: 'seed' },
-      ],
-      q: 'sorted items language:python',
-    },
-    {
-      kind: 'conceptual',
-      tags: [
-        { tag: 'sort_by_value', source: 'llm' },
-        { tag: 'ranking', source: 'llm' },
-      ],
-      q: 'sort_by_value ranking language:python',
-    },
-    {
-      kind: 'paradigm',
-      tags: [{ tag: 'itemgetter', source: 'llm' }],
-      q: 'itemgetter language:python',
-    },
+    { kind: 'syntactic', tags: ['sorted', 'items'], dropped: [], q: 'sorted items language:python' },
+    { kind: 'conceptual', tags: ['sort_by_value', 'ranking'], dropped: [], q: 'sort_by_value ranking language:python' },
+    { kind: 'paradigm', tags: ['itemgetter'], dropped: [], q: 'itemgetter language:python' },
   ],
   llm: { error: null },
+}
+
+// El rearmado sin el modelo: cada tag entra en su query, salvo los que diga el test
+function replanned(tags: SentTag[], dropped: string[]) {
+  const kinds = [...new Set(tags.map(tag => tag.kind))]
+  return {
+    pool: [],
+    queries: kinds.map(kind => {
+      const texts = tags.filter(tag => tag.kind === kind).map(tag => tag.tag)
+      return {
+        kind,
+        tags: texts.filter(text => !dropped.includes(text)),
+        dropped: texts.filter(text => dropped.includes(text)),
+        q: `${texts.join(' ')} language:python`,
+      }
+    }),
+    llm: { error: null },
+  }
+}
+
+// El preview del backend: sin tags propone el pool, con tags rearma las queries
+function previewRoute(initial: JsonBodyType, dropped: string[] = []) {
+  return http.post(`${API}/api/search/preview`, async ({ request }) => {
+    const body = (await request.json()) as { tags?: SentTag[] }
+    return HttpResponse.json(body.tags ? replanned(body.tags, dropped) : initial)
+  })
 }
 
 // Una respuesta que llega recien cuando el test la suelta
@@ -138,16 +156,8 @@ describe('confirming the tags', () => {
     server.use(
       http.post(`${API}/api/search/preview`, () =>
         HttpResponse.json({
-          queries: [
-            {
-              kind: 'tiers',
-              tags: [
-                { tag: 'sorted', source: 'seed' },
-                { tag: 'rank', source: 'seed' },
-              ],
-              q: 'sorted rank language:python',
-            },
-          ],
+          pool: pooled('tiers', 'seed', 'sorted', 'rank'),
+          queries: [{ kind: 'tiers', tags: ['sorted', 'rank'], dropped: [], q: 'sorted rank language:python' }],
           llm: { error: 'llm_unavailable' },
         }),
       ),
@@ -163,7 +173,7 @@ describe('confirming the tags', () => {
   })
 
   it('goes back to the snippet, kept for editing', async () => {
-    server.use(http.post(`${API}/api/search/preview`, () => HttpResponse.json(PREVIEW)))
+    server.use(previewRoute(PREVIEW))
     const user = userEvent.setup()
     render(<Search />)
     await proposeTags(user)
@@ -292,7 +302,7 @@ async function searchWithTags(user: UserEvent) {
 
 function stubSearch(body: JsonBodyType) {
   server.use(
-    http.post(`${API}/api/search/preview`, () => HttpResponse.json(PREVIEW)),
+    previewRoute(PREVIEW),
     http.post(`${API}/api/search`, () => HttpResponse.json(body)),
   )
 }
@@ -301,7 +311,7 @@ describe('reading the results', () => {
   it('searches with exactly the confirmed tags and orders repositories, files and subtrees by cosine', async () => {
     let sent: unknown
     server.use(
-      http.post(`${API}/api/search/preview`, () => HttpResponse.json(PREVIEW)),
+      previewRoute(PREVIEW),
       http.post(`${API}/api/search`, async ({ request }) => {
         sent = await request.json()
         return HttpResponse.json(RESULTS)
@@ -399,7 +409,7 @@ describe('the end of a search', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const search = held(RESULTS)
     server.use(
-      http.post(`${API}/api/search/preview`, () => HttpResponse.json(PREVIEW)),
+      previewRoute(PREVIEW),
       http.post(`${API}/api/search`, search.respond),
     )
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
@@ -420,7 +430,7 @@ describe('the end of a search', () => {
 
   it("never shows GitHub's own text when the search fails, and can go back to the tags", async () => {
     server.use(
-      http.post(`${API}/api/search/preview`, () => HttpResponse.json(PREVIEW)),
+      previewRoute(PREVIEW),
       // Un error de GitHub viaja con su status y su body, sin code nuestro
       http.post(`${API}/api/search`, () =>
         HttpResponse.json(
@@ -431,7 +441,9 @@ describe('the end of a search', () => {
     )
     const user = userEvent.setup()
     render(<Search />)
-    await searchWithTags(user)
+    await proposeTags(user)
+    await user.click(await screen.findByRole('button', { name: /^items/ }))
+    await user.click(screen.getByRole('button', { name: /search with these tags/i }))
 
     const alert = await screen.findByRole('alert')
     expect(alert.textContent).toMatch(/went wrong.*HTTP 403/)
@@ -440,6 +452,8 @@ describe('the end of a search', () => {
     await user.click(screen.getByRole('button', { name: /back to the tags/i }))
     expect(screen.getByRole('button', { name: /search with these tags/i })).toHaveProperty('disabled', false)
     expect(screen.queryByRole('alert')).toBeNull()
+    // Volver a los tags no pierde lo que se edito
+    expect(screen.getByRole('button', { name: /^items/ }).getAttribute('aria-pressed')).toBe('false')
   })
 
   it('starts a new search from the snippet, kept for editing', async () => {
@@ -453,5 +467,107 @@ describe('the end of a search', () => {
     expect(snippetBox().value).toBe(METHOD)
     expect(snippetBox().readOnly).toBe(false)
     expect(screen.queryByRole('region', { name: /results/i })).toBeNull()
+  })
+})
+
+// --- editar los tags (#22) ----------------------------------------------------
+
+// Una busqueda que guarda lo que se le mando y no encuentra nada
+function recordSearch() {
+  const sent: { tags?: SentTag[] } = {}
+  server.use(
+    http.post(`${API}/api/search`, async ({ request }) => {
+      Object.assign(sent, await request.json())
+      return HttpResponse.json({ results: [] })
+    }),
+  )
+  return sent
+}
+
+async function runSearch(user: UserEvent) {
+  await user.click(screen.getByRole('button', { name: /search with these tags/i }))
+  await screen.findByRole('region', { name: /results/i })
+}
+
+const addBox = (group: string) => screen.getByRole('textbox', { name: `Add a tag to ${group}` })
+
+describe('editing the tags', () => {
+  it('leaves a deselected tag out of the search', async () => {
+    server.use(previewRoute(PREVIEW))
+    const sent = recordSearch()
+    const user = userEvent.setup()
+    render(<Search />)
+    await proposeTags(user)
+
+    const items = await screen.findByRole('button', { name: /^items/ })
+    await user.click(items)
+
+    expect(items.getAttribute('aria-pressed')).toBe('false')
+    await runSearch(user)
+    expect(sent.tags).toEqual([
+      { tag: 'sorted', kind: 'syntactic' },
+      { tag: 'sort_by_value', kind: 'conceptual' },
+      { tag: 'ranking', kind: 'conceptual' },
+      { tag: 'itemgetter', kind: 'paradigm' },
+    ])
+  })
+
+  it("adds a tag of the user's own to its group's query, even a group the model left empty", async () => {
+    const withoutParadigm = {
+      ...PREVIEW,
+      pool: PREVIEW.pool.filter(tag => tag.kind !== 'paradigm'),
+      queries: PREVIEW.queries.filter(query => query.kind !== 'paradigm'),
+    }
+    server.use(previewRoute(withoutParadigm))
+    const sent = recordSearch()
+    const user = userEvent.setup()
+    render(<Search />)
+    await proposeTags(user)
+
+    await user.type(await screen.findByRole('textbox', { name: 'Add a tag to Paradigm' }), 'heapq{Enter}')
+
+    expect(tagsOf(/paradigm/i)).toEqual(['heapq you'])
+    await runSearch(user)
+    expect(sent.tags).toContainEqual({ tag: 'heapq', kind: 'paradigm' })
+  })
+
+  it("marks a selected tag that won't fit its query", async () => {
+    server.use(previewRoute(PREVIEW, ['top k']))
+    const user = userEvent.setup()
+    render(<Search />)
+    await proposeTags(user)
+
+    await user.type(await screen.findByRole('textbox', { name: 'Add a tag to Conceptual' }), 'top k{Enter}')
+
+    expect(await within(screen.getByRole('list', { name: /conceptual/i })).findByText(/won't fit/)).toBeTruthy()
+    expect(tagsOf(/conceptual/i)).toEqual(['sort_by_value model', 'ranking model', "top k you · won't fit"])
+  })
+
+  it("can't search with no tag selected", async () => {
+    server.use(previewRoute(PREVIEW))
+    const user = userEvent.setup()
+    render(<Search />)
+    await proposeTags(user)
+    await screen.findByRole('list', { name: /syntactic/i })
+
+    for (const tag of ['sorted', 'items', 'sort_by_value', 'ranking', 'itemgetter']) {
+      await user.click(screen.getByRole('button', { name: new RegExp(`^${tag}`) }))
+    }
+
+    expect(screen.getByRole('button', { name: /search with these tags/i })).toHaveProperty('disabled', true)
+    expect(screen.getByText(/select at least one tag/i)).toBeTruthy()
+  })
+
+  it('refuses a tag with a double quote', async () => {
+    server.use(previewRoute(PREVIEW))
+    const user = userEvent.setup()
+    render(<Search />)
+    await proposeTags(user)
+
+    await user.type(await screen.findByRole('textbox', { name: 'Add a tag to Conceptual' }), 'say "hi"{Enter}')
+
+    expect(screen.getByText(/double quotes/i)).toBeTruthy()
+    expect(tagsOf(/conceptual/i)).toEqual(['sort_by_value model', 'ranking model'])
+    expect(addBox('Conceptual')).toHaveProperty('value', 'say "hi"')
   })
 })

@@ -1,12 +1,13 @@
-export type TagSource = 'ast' | 'model'
+export type TagSource = 'ast' | 'model' | 'you'
 
-export type Tag = { text: string; source: TagSource }
+export type DraftTag = { text: string; source: TagSource; selected: boolean }
 
-// Una query de la busqueda: syntactic, conceptual, paradigm, o tiers sin el modelo
-export type TagQuery = { kind: string; tags: Tag[] }
+// Un grupo es una query: syntactic, conceptual, paradigm, o tiers sin el modelo.
+// `dropped` son los seleccionados que no entran por el tope de tags o de largo
+export type TagGroup = { kind: string; tags: DraftTag[]; dropped: string[] }
 
 export type TagPreview = {
-  queries: TagQuery[]
+  groups: TagGroup[]
   // El code del modelo si fallo: los tags salen entonces solo del AST
   modelError: string | null
 }

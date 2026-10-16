@@ -98,14 +98,14 @@ Everything in this section lives under `frontend/`, and the paths below are rela
 
 React 19, Vite 8, Tailwind v4 (via `@tailwindcss/vite`, not a PostCSS config), axios, and `prism-react-renderer` for highlighting. One page, no router. `@/` is aliased to `src/` in both `vite.config.ts` and the tsconfigs — use it rather than deep relative paths.
 
-The page talks only to our backend, at `VITE_API_URL` (default `http://127.0.0.1:8000`, `src/constants/api.ts`), and knows nothing about GitHub's API. #38 built it; filters (#19), tag editing (#22) and the error taxonomy (#9) are still to come.
+The page talks only to our backend, at `VITE_API_URL` (default `http://127.0.0.1:8000`, `src/constants/api.ts`), and knows nothing about GitHub's API. #38 built it and #22 added tag editing; filters (#19) and the error taxonomy (#9) are still to come.
 
 The directory names encode a layering that is worth respecting:
 
 - `jsons/` — raw backend shapes, mirroring `/openapi.json` with only the fields read. `types/` — domain shapes the UI consumes.
 - `model/` — no classes; `model/Search.ts` is the raw→domain mapping, and the boundary between `jsons/` and `types/` is crossed **here and only here**. Grouping results by repository happens here too.
 - `services/` — axios calls. `common.ts::getAxiosData` is the single error funnel: every failed call becomes an `ApiError` carrying the backend's stable `code` (if any) and the status, or `null` for no response. Callers never touch `AxiosError`.
-- `utility/` — pure helpers. `ErrorCopy.ts` keys the user-facing copy by `code`; an unreachable backend has its own line, anything else a generic one, and neither the backend's `message` nor GitHub's text is ever shown.
+- `utility/` — pure helpers. `TagEdits.ts` toggles and adds tags on the domain shape. `ErrorCopy.ts` keys the user-facing copy by `code`; an unreachable backend has its own line, anything else a generic one, and neither the backend's `message` nor GitHub's text is ever shown.
 - `components/`, `pages/` — presentation. `pages/Search.tsx` holds the step state and the two calls.
 
 There is no `README.md`: #2 renamed the stock Vite template readme to `FRONTEND.md` (now `frontend/FRONTEND.md`) and replaced it with real frontend docs.
@@ -115,7 +115,7 @@ There is no `README.md`: #2 renamed the stock Vite template readme to `FRONTEND.
 `Search.tsx` keeps the snippet in its own state and everything else in one `Step` union (`types/Step.ts`): editing → loadingTags → confirming → searching → done, or failed (which step, and the error). Keep that shape when adding states.
 
 1. **Snippet.** Pasted, or a `.py` file read into the same box. It is sent **untrimmed**: trimming strips the first line's indentation and breaks a pasted method.
-2. **Tags.** `POST /api/search/preview` returns the queries the search would run; the page shows them by kind, each tag marked AST or model, and notes when the model was unavailable. Confirming sends exactly those tags back in `/api/search`'s `tags` field, so the LLM isn't called twice.
+2. **Tags.** `POST /api/search/preview` returns a pool of tags by kind, each marked AST or model and selected or not, and notes when the model was unavailable. The user toggles tags and adds their own, one input per group, so a tag's kind is its group (#22). After each edit the page sends the selection back to the preview, which rebuilds the queries without the model and says which tags won't fit; only the latest answer counts. Confirming sends exactly the selected tags in `/api/search`'s `tags` field, so the LLM isn't called twice.
 3. **Results.** Each result is a subtree that may live in several repos (same blob). `toSearchOutcome` places it once, under the first of its `locations`, and lists the rest as "also in". Repos order by their best cosine, files and subtrees within them by cosine, ties by name.
 
 Both waits count elapsed seconds and lock the controls. Nothing found is a plain sentence, never the error style.
