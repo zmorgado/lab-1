@@ -1,18 +1,21 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import Button from '@/components/Button'
 import Elapsed from '@/components/Elapsed'
 import Failure from '@/components/Failure'
 import Results from '@/components/Results'
 import SnippetForm from '@/components/SnippetForm'
 import TagConfirmation from '@/components/TagConfirmation'
-import { toConfirmedTags, toSearchOutcome, toTagPreview } from '@/model/Search'
+import { toConfirmedTags, toSearchOutcome, toTagPreview, withDropped } from '@/model/Search'
 import { searchService } from '@/services/SearchService'
 import type { Step } from '@/types/Step'
 import type { TagPreview } from '@/types/TagPreview'
+import { addTag, toggleTag } from '@/utility/TagEdits'
 
 export default function Search() {
   const [snippet, setSnippet] = useState('')
   const [state, setState] = useState<Step>({ step: 'editing' })
+  // Solo cuenta la respuesta del ultimo rearmado: una vieja pisaria la edicion
+  const lastPlan = useRef(0)
 
   async function proposeTags() {
     setState({ step: 'loadingTags' })
@@ -21,6 +24,23 @@ export default function Search() {
       setState({ step: 'confirming', preview })
     } catch (error) {
       setState({ step: 'failed', at: 'tags', error })
+    }
+  }
+
+  // Cada edicion le pregunta al backend que entra en cada query, sin el modelo
+  async function editTags(preview: TagPreview) {
+    setState({ step: 'confirming', preview })
+    const plan = ++lastPlan.current
+    const tags = toConfirmedTags(preview)
+    if (tags.length === 0) return
+    try {
+      const raw = await searchService.plan(snippet, tags)
+      if (plan !== lastPlan.current) return
+      setState(current =>
+        current.step === 'confirming' ? { ...current, preview: withDropped(current.preview, raw) } : current,
+      )
+    } catch {
+      // Sin el rearmado, las marcas de lo que no entra quedan como estaban
     }
   }
 
@@ -78,6 +98,8 @@ export default function Search() {
       {preview && (
         <TagConfirmation
           preview={preview}
+          onToggle={(kind, text) => editTags(toggleTag(preview, kind, text))}
+          onAdd={(kind, text) => editTags(addTag(preview, kind, text))}
           onConfirm={() => runSearch(preview)}
           onBack={editSnippet}
           locked={state.step === 'searching'}

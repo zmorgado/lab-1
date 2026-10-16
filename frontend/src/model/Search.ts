@@ -1,3 +1,4 @@
+import { AST_KIND, MODEL_KINDS } from '@/constants/tags'
 import type { PreviewResponse } from '@/jsons/PreviewResponse'
 import type { ConfirmedTagBody } from '@/jsons/SearchRequest'
 import type { SearchResponse } from '@/jsons/SearchResponse'
@@ -6,17 +7,40 @@ import type { TagPreview } from '@/types/TagPreview'
 
 // La frontera entre las formas crudas del backend (jsons/) y las del dominio (types/)
 
-export const toTagPreview = (raw: PreviewResponse): TagPreview => ({
-  queries: raw.queries.map(query => ({
-    kind: query.kind,
-    tags: query.tags.map(tag => ({ text: tag.tag, source: tag.source === 'llm' ? 'model' : 'ast' })),
+export function toTagPreview(raw: PreviewResponse): TagPreview {
+  // Sin el modelo hay una sola query, la del AST; con el, las tres aunque esten vacias
+  const kinds = raw.pool.some(tag => tag.kind === AST_KIND) ? [AST_KIND] : MODEL_KINDS
+  const preview = {
+    groups: kinds.map(kind => ({
+      kind,
+      tags: raw.pool
+        .filter(tag => tag.kind === kind)
+        .map(tag => ({
+          text: tag.tag,
+          source: tag.source === 'llm' ? ('model' as const) : ('ast' as const),
+          selected: tag.selected,
+        })),
+      dropped: [],
+    })),
+    modelError: raw.llm.error,
+  }
+  return withDropped(preview, raw)
+}
+
+// Lo que no entra en cada query, segun el ultimo rearmado del backend
+export const withDropped = (preview: TagPreview, raw: PreviewResponse): TagPreview => ({
+  ...preview,
+  groups: preview.groups.map(group => ({
+    ...group,
+    dropped: raw.queries.find(query => query.kind === group.kind)?.dropped ?? [],
   })),
-  modelError: raw.llm.error,
 })
 
-// La busqueda corre con exactamente los tags que se mostraron
+// La busqueda corre con exactamente los tags seleccionados
 export const toConfirmedTags = (preview: TagPreview): ConfirmedTagBody[] =>
-  preview.queries.flatMap(query => query.tags.map(tag => ({ tag: tag.text, kind: query.kind })))
+  preview.groups.flatMap(group =>
+    group.tags.filter(tag => tag.selected).map(tag => ({ tag: tag.text, kind: group.kind })),
+  )
 
 // Cada resultado es un subarbol que puede estar en varios repos (mismo blob). Va
 // una sola vez, bajo el primero de sus `locations`, y nombra a los demas: asi un
