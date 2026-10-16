@@ -78,6 +78,7 @@ const PREVIEW = {
     { kind: 'paradigm', tags: ['itemgetter'], dropped: [], q: 'itemgetter language:python' },
   ],
   llm: { error: null },
+  is_fallback: false,
 }
 
 // El rearmado sin el modelo: cada tag entra en su query, salvo los que diga el test
@@ -95,6 +96,7 @@ function replanned(tags: SentTag[], dropped: string[]) {
       }
     }),
     llm: { error: null },
+    is_fallback: false,
   }
 }
 
@@ -159,6 +161,7 @@ describe('confirming the tags', () => {
           pool: pooled('tiers', 'seed', 'sorted', 'rank'),
           queries: [{ kind: 'tiers', tags: ['sorted', 'rank'], dropped: [], q: 'sorted rank language:python' }],
           llm: { error: 'llm_unavailable' },
+          is_fallback: false,
         }),
       ),
     )
@@ -569,5 +572,36 @@ describe('editing the tags', () => {
     expect(screen.getByText(/double quotes/i)).toBeTruthy()
     expect(tagsOf(/conceptual/i)).toEqual(['sort_by_value model', 'ranking model'])
     expect(addBox('Conceptual')).toHaveProperty('value', 'say "hi"')
+  })
+})
+
+describe('the pool', () => {
+  it('offers the tags the model left out, switched off, and searches with one once picked', async () => {
+    const withLeftOut = {
+      ...PREVIEW,
+      pool: [...PREVIEW.pool, { tag: 'rank_by_score', kind: 'syntactic', source: 'seed', selected: false }],
+    }
+    server.use(previewRoute(withLeftOut))
+    const sent = recordSearch()
+    const user = userEvent.setup()
+    render(<Search />)
+    await proposeTags(user)
+
+    const offered = await screen.findByRole('button', { name: /^rank_by_score/ })
+    expect(offered.getAttribute('aria-pressed')).toBe('false')
+    await user.click(offered)
+
+    await runSearch(user)
+    expect(sent.tags).toContainEqual({ tag: 'rank_by_score', kind: 'syntactic' })
+  })
+
+  it("says when the snippet didn't parse and the tags come from a text scan", async () => {
+    server.use(previewRoute({ ...PREVIEW, is_fallback: true }))
+    const user = userEvent.setup()
+    render(<Search />)
+
+    await proposeTags(user)
+
+    expect(await screen.findByText(/didn't parse/i)).toBeTruthy()
   })
 })

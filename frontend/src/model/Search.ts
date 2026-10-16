@@ -23,6 +23,7 @@ export function toTagPreview(raw: PreviewResponse): TagPreview {
       dropped: [],
     })),
     modelError: raw.llm.error,
+    textScan: raw.is_fallback,
   }
   return withDropped(preview, raw)
 }
