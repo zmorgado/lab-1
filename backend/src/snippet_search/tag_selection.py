@@ -112,7 +112,7 @@ def _weighted_seeds(tiers: Tiers) -> list[_Seed]:
         *([_Seed("lambda", WEIGHT_API, KIND_PARADIGM)] if "lambda" in tiers.structures else []),
         *(_Seed(name, WEIGHT_IMPORT, KIND_PARADIGM) for name in tiers.imports),
     ]
-    # 'Rank' y 'rank' son el mismo tag: queda el de mas peso
+    # 'Rank' y 'rank' son el mismo tag: queda el que va primero por peso
     unique: dict[str, _Seed] = {}
     for seed in seeds:
         unique.setdefault(seed.text.lower(), seed)
