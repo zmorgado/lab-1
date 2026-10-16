@@ -2,11 +2,13 @@ import { useState } from 'react'
 import Button from '@/components/Button'
 import Elapsed from '@/components/Elapsed'
 import Failure from '@/components/Failure'
+import Results from '@/components/Results'
 import SnippetForm from '@/components/SnippetForm'
 import TagConfirmation from '@/components/TagConfirmation'
-import { toTagPreview } from '@/model/Search'
+import { toConfirmedTags, toSearchOutcome, toTagPreview } from '@/model/Search'
 import { searchService } from '@/services/SearchService'
 import type { Step } from '@/types/Step'
+import type { TagPreview } from '@/types/TagPreview'
 
 export default function Search() {
   const [snippet, setSnippet] = useState('')
@@ -22,7 +24,26 @@ export default function Search() {
     }
   }
 
+  async function runSearch(preview: TagPreview) {
+    setState({ step: 'searching', preview })
+    try {
+      const outcome = toSearchOutcome(await searchService.search(snippet, toConfirmedTags(preview)))
+      setState({ step: 'done', preview, outcome })
+    } catch (error) {
+      setState({ step: 'failed', at: 'search', error, preview })
+    }
+  }
+
+  // Una busqueda nueva arranca editando, con el snippet de antes
+  const editSnippet = () => setState({ step: 'editing' })
+  const backToSnippet = (
+    <Button onClick={editSnippet}>
+      <span aria-hidden="true">◂</span> Change the snippet
+    </Button>
+  )
+
   const editing = state.step === 'editing'
+  const preview = 'preview' in state ? state.preview : null
 
   return (
     <main className="mx-auto max-w-page px-5 pb-16 sm:px-9 sm:pb-24">
@@ -52,23 +73,44 @@ export default function Search() {
       />
 
       {state.step === 'loadingTags' && <Elapsed>Reading the snippet and proposing tags</Elapsed>}
+      {state.step === 'failed' && state.at === 'tags' && <Failure error={state.error}>{backToSnippet}</Failure>}
 
-      {state.step === 'confirming' && (
+      {preview && (
         <TagConfirmation
-          preview={state.preview}
-          onConfirm={() => {}}
-          onBack={() => setState({ step: 'editing' })}
-          locked={false}
-          showActions
+          preview={preview}
+          onConfirm={() => runSearch(preview)}
+          onBack={editSnippet}
+          locked={state.step === 'searching'}
+          showActions={state.step === 'confirming' || state.step === 'searching'}
         />
       )}
 
-      {state.step === 'failed' && (
+      {state.step === 'searching' && (
+        <>
+          <Elapsed>Searching GitHub and ranking the code it finds</Elapsed>
+          <p className="mt-2 max-w-prose text-base text-pencil">
+            The first search after the service starts also loads the ranking model, so it takes longer.
+          </p>
+        </>
+      )}
+      {state.step === 'failed' && state.at === 'search' && (
         <Failure error={state.error}>
-          <Button onClick={() => setState({ step: 'editing' })}>
-            <span aria-hidden="true">◂</span> Change the snippet
+          <Button primary onClick={() => setState({ step: 'confirming', preview: state.preview })}>
+            <span aria-hidden="true">◂</span> Back to the tags
           </Button>
+          {backToSnippet}
         </Failure>
+      )}
+
+      {state.step === 'done' && (
+        <Results
+          outcome={state.outcome}
+          actions={
+            <Button primary onClick={editSnippet}>
+              New search <span aria-hidden="true">▸</span>
+            </Button>
+          }
+        />
       )}
     </main>
   )

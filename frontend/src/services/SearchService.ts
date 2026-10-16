@@ -1,6 +1,8 @@
 import axios from 'axios'
 import { API_URL, LANGUAGE } from '@/constants/api'
 import type { PreviewResponse } from '@/jsons/PreviewResponse'
+import type { ConfirmedTagBody } from '@/jsons/SearchRequest'
+import type { SearchResponse } from '@/jsons/SearchResponse'
 import { getAxiosData } from './common'
 
 const backend = axios.create({ baseURL: API_URL })
@@ -10,6 +12,13 @@ class SearchService {
   async preview(source: string) {
     return await getAxiosData(() =>
       backend.post<PreviewResponse>('/api/search/preview', { source, language: LANGUAGE }),
+    )
+  }
+
+  // Con los tags confirmados el backend no vuelve a llamar al modelo
+  async search(source: string, tags: ConfirmedTagBody[]) {
+    return await getAxiosData(() =>
+      backend.post<SearchResponse>('/api/search', { source, language: LANGUAGE, tags }),
     )
   }
 }
