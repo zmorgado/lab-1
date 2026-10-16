@@ -245,20 +245,33 @@ Both errors are 422s with a stable `code`, as in #7, and neither reaches GitHub:
 `nothing_to_search` (no usable tags) and `unsupported_language`. Filters (owner,
 repo, languages) are #19's.
 
-### Tag preview and confirmed tags (#38)
+Verify it end to end against the real API, with the server running:
 
-The page shows the tags before spending any search budget, so stages 1–2 also
-run alone. `POST /api/search/preview` takes the same `source` and `language` and
-runs them exactly as the search does: AST tiers, then the LLM, then
-`build_query` per kind. It returns the queries the search would run, with only
-the tags that fit after the 6-tag and 256-character limits, each with its
-`source`: `seed` from the AST, `llm` from the model. It spends one LLM call and
-no GitHub request.
+```
+jq -Rs '{source: .}' some_snippet.py | curl -s -X POST localhost:8000/api/search \
+  -H 'Content-Type: application/json' -d @- \
+  | jq '{queries, results: [.results[] | {rank, score, name}], totals: (.github | map_values(.total_count))}'
+```
+
+### Tag preview and selected tags (#38, #22)
+
+The page shows the tags before spending any search budget, and lets the user pick
+and add them, so stages 1–2 also run alone. `POST /api/search/preview` takes the
+same `source` and `language` and runs them exactly as the search does: AST tiers,
+then the LLM, then `build_query` per kind. It spends one LLM call and no GitHub
+request, and returns:
+
+- `pool`: every tag offered, with its `kind` (the query it feeds), its `source`
+  (`seed` from the AST, `llm` from the model) and whether it is `selected` unless
+  the user changes it;
+- `queries`: per kind, the selected tags that fit the 6-tag and 256-character
+  limits, the ones those limits `dropped`, and the `q` it would send (`null` when
+  none fit). Nothing is truncated silently.
 
 ```
 POST /api/search/preview   {"source": "...", "language": "python"}   # language optional
-→ {"queries": [{"kind": "syntactic",
-                "tags": [{"tag": "sorted", "source": "seed"}, ...],
+→ {"pool": [{"tag": "sorted", "kind": "syntactic", "source": "seed", "selected": true}, ...],
+   "queries": [{"kind": "syntactic", "tags": ["sorted", "items"], "dropped": [],
                 "q": "sorted items language:python"}, ...],
    "llm": {"error": null}}
 ```
@@ -267,30 +280,26 @@ With the model unavailable it still answers 200, with one `tiers` query from the
 AST and the LLM's code in `llm.error` (the LLM is a complement, #1). Its errors
 are the search's: `nothing_to_search` and `unsupported_language`.
 
-`POST /api/search` then takes the confirmed tags in an optional `tags` field, one
+Both routes take the user's selection in an optional `tags` field, one
 `{"tag", "kind"}` per tag, `kind` being `syntactic`, `conceptual`, `paradigm` or
 `tiers`. With `tags`:
 
-- it builds one query per kind from them, in that order, and **does not call the
-  LLM again**, so `llm` comes back as `{"tags": null, "error": null}`;
+- **neither calls the LLM**. The preview only rebuilds `queries` from them, with
+  an empty `pool` since the client already holds it, so the page can show what
+  fits while the user edits. The search runs them, and `llm` comes back as
+  `{"tags": null, "error": null}`;
+- the queries are one per kind, in that order;
 - the anchors are the snippet's AST `apis` and `structures`, recomputed since
-  they are deterministic and free, plus every confirmed tag;
-- an empty tag, an unknown kind or a double quote (which would break `q`) is a
-  422 with `code: invalid_tag`, before GitHub is called, and so is `tiers` mixed
-  with the model's kinds: the `tiers` query replaces those three, and together
-  they would spend four code-search requests. An empty list is
-  `nothing_to_search`.
+  they are deterministic and free, plus every selected tag;
+- each tag is checked before GitHub is called. Empty, over 100 characters, an
+  unknown kind or a double quote (which would break `q`) is a 422 with
+  `code: invalid_tag`, and so is `tiers` mixed with the model's kinds: the `tiers`
+  query replaces those three, and together they would spend four code-search
+  requests. An empty list is `nothing_to_search`.
 
-Without `tags`, the search runs the LLM itself as before, so plain curl usage
-keeps working.
-
-Verify it end to end against the real API, with the server running:
-
-```
-jq -Rs '{source: .}' some_snippet.py | curl -s -X POST localhost:8000/api/search \
-  -H 'Content-Type: application/json' -d @- \
-  | jq '{queries, results: [.results[] | {rank, score, name}], totals: (.github | map_values(.total_count))}'
-```
+`build_query` quotes a bare `AND`, `OR` or `NOT`, so a tag the user types is
+searched as a word instead of acting as a GitHub operator. Without `tags`, the
+search runs the LLM itself as before, so plain curl usage keeps working.
 
 ## AST stage (#20)
 

@@ -142,7 +142,7 @@ def create_app(settings: Settings | None = None, rank: Ranker = unixcoder_rank) 
             llm=tags,
             rank=rank,
             max_results=payload.max_results,
-            tags=payload.confirmed_tags(),
+            tags=payload.selected_tags(),
         )
         # Los headers van por el Response inyectado: asi el body sale validado
         # contra SearchResponse y queda tipado en /openapi.json (#35)
@@ -153,7 +153,9 @@ def create_app(settings: Settings | None = None, rank: Ranker = unixcoder_rank) 
     async def preview_search(tags: TagsDep, payload: PreviewRequest) -> PreviewResponse:
         # Un paso del usuario y no una etapa: ve los tags antes de gastar
         # presupuesto de GitHub (#38)
-        plan = await preview(payload.source, payload.language, llm=tags)
+        plan = await preview(
+            payload.source, payload.language, llm=tags, tags=payload.selected_tags()
+        )
         return PreviewResponse.model_validate(plan.as_preview())
 
     @app.post("/api/tags")

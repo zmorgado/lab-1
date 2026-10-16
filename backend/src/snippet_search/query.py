@@ -15,6 +15,8 @@ MAX_TAGS = 6
 MAX_QUERY_LENGTH = 256
 
 SINGLE_TOKEN_PATTERN = re.compile(r"\w+")
+# Los operadores de search/code: sueltos cambiarian la query en vez de buscarse
+OPERATORS = frozenset({"AND", "OR", "NOT"})
 
 
 @dataclass(frozen=True)
@@ -58,4 +60,6 @@ def build_query(tags: Iterable[str], language: str) -> SearchQuery | NothingToSe
 
 def _as_term(tag: str) -> str:
     # Las comillas fuerzan frase exacta: sin ellas 'binary search' son dos terminos sueltos
-    return tag if SINGLE_TOKEN_PATTERN.fullmatch(tag) else f'"{tag}"'
+    if SINGLE_TOKEN_PATTERN.fullmatch(tag) and tag not in OPERATORS:
+        return tag
+    return f'"{tag}"'
