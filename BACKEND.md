@@ -324,8 +324,7 @@ POST /api/tags   {"source": "...", "language": "Python"}   # language optional
 Each kind holds at most 6 tags (`MAX_TAGS_PER_KIND`), one query's worth.
 
 **Provider**: Google Gemini (`gemini-3.8-flash`) over plain REST with `httpx`. The
-free tier needs no card, takes a JSON schema for the response and lets thinking be
-switched off. Key at <https://aistudio.google.com/apikey>; limits change, read
+free tier needs no card, takes a JSON schema for the response. No `thinkingConfig` is sent: `thinkingBudget` is a 400 on the 3.x models. Key at <https://aistudio.google.com/apikey>; limits change, read
 <https://ai.google.dev/gemini-api/docs/rate-limits>. Under the free-tier
 [terms](https://ai.google.dev/gemini-api/terms) Google may use the content sent to
 improve its products: fine for public code pasted into a search engine, not for

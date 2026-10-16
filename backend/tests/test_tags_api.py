@@ -25,9 +25,10 @@ from conftest import SETTINGS as BASE_SETTINGS
 from test_llm_tags import MODEL_TAGS, SNIPPET
 
 SETTINGS = replace(BASE_SETTINGS, gemini_api_key="test-key")
+# Con el modelo de los settings: cambiar el default no rompe los tests
 GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
-    "gemini-3.8-flash:generateContent"
+    f"{SETTINGS.gemini_model}:generateContent"
 )
 
 

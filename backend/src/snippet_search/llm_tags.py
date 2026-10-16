@@ -272,10 +272,9 @@ class GeminiTagService:
                 "temperature": 0.0,
                 "responseMimeType": "application/json",
                 "responseSchema": _RESPONSE_SCHEMA,
-                # Sacar tags es leer, no razonar: sin thinking la respuesta
-                # baja de decenas de segundos a pocos, y no gasta cuota en
-                # tokens de pensamiento que nadie lee.
-                "thinkingConfig": {"thinkingBudget": 0},
+                # Sin thinkingConfig a proposito: thinkingBudget lo rechazan con
+                # 400 los modelos 3.x (gemini-3.5-flash-lite), y el parametro que
+                # lo reemplaza depende del modelo. Cada familia usa su default.
             },
         }
 
@@ -395,4 +394,3 @@ def _error_code(status: int) -> str:
     if status >= 500:
         return ERROR_LLM_UNAVAILABLE
     return ERROR_LLM_FAILED
-
