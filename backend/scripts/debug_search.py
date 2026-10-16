@@ -22,7 +22,7 @@ from snippet_search.github import GitHubClient
 from snippet_search.llm_tags import GeminiTagService
 from snippet_search.pipeline import search, unixcoder_rank
 
-# El ejemplo de docs/research/solution-schematics-v2.md. Raw: el '\r\n' de un
+# ~~El ejemplo de docs/research/solution-schematics-v2.md.~~ Raw: el '\r\n' de un
 # comentario tiene que llegar como texto, no como un salto de linea real
 DEFAULT_SNIPPET = r'''
 """Agente base: define el flujo fijo de un turno (Template Method)."""
