@@ -80,7 +80,7 @@ A GitHub-backed search engine: paste a snippet, get back ranked code on GitHub t
 
 Then results (#8, #23): one ranked, deduplicated list with repo, path, the matching snippet, scores and the query that found it.
 
-**Endpoints follow the user's steps, not the stages.** Each stage is a plain backend module, and `pipeline.py` chains them behind `POST /api/search`. A new stage plugs into `pipeline.search()`; a new endpoint is only for a new user step, like the tag preview #22 needs before searching.
+**Endpoints follow the user's steps, not the stages.** Each stage is a plain backend module, and `pipeline.py` chains them behind `POST /api/search`. A new stage plugs into `pipeline.search()`; a new endpoint is only for a new user step, like the tag preview (`POST /api/search/preview`, #38) the user confirms before searching. The confirmed tags go back in `/api/search`'s `tags` field, and the LLM isn't called twice.
 
 The diagram is `docs/diagrams/lab-1.architecture.html`, generated from the JSON beside it with the `archify` skill.
 

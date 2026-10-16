@@ -1,7 +1,8 @@
-"""Lado HTTP de la busqueda (#4, #8): el request y la respuesta de /api/search.
+"""Lado HTTP de la busqueda (#4, #8, #38): los requests y las respuestas de
+/api/search y de su preview de tags.
 
-La ruta se cuelga en `create_app()`; el pipeline vive en `pipeline.py` y no sabe
-de HTTP.
+Las rutas se cuelgan en `create_app()`; el pipeline vive en `pipeline.py` y no
+sabe de HTTP.
 """
 
 from __future__ import annotations
@@ -10,16 +11,26 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from .pipeline import MAX_EMBEDDED_SUBTREES
+from .pipeline import MAX_EMBEDDED_SUBTREES, TAG_KINDS, ConfirmedTag
 from .results import DEFAULT_MAX_RESULTS
 from .tags_api import TagItem
 
 
-class SearchRequest(BaseModel):
+class PreviewRequest(BaseModel):
     source: str = Field(description="The pasted snippet, as text")
     language: str = Field(
         default="python", description="Only Python for now; case-insensitive"
     )
+
+
+class TagIn(BaseModel):
+    # El tipo no es un Literal: uno desconocido tiene que ser un 422 con el
+    # code estable del pipeline, no el 422 generico de FastAPI
+    tag: str
+    kind: str = Field(description=f"The query it feeds: {', '.join(TAG_KINDS)}")
+
+
+class SearchRequest(PreviewRequest):
     # El techo es lo que llega a UniXcoder: no hay mas resultados que esos
     max_results: int = Field(
         default=DEFAULT_MAX_RESULTS,
@@ -27,6 +38,39 @@ class SearchRequest(BaseModel):
         le=MAX_EMBEDDED_SUBTREES,
         description=f"How many results to return, 1 to {MAX_EMBEDDED_SUBTREES}",
     )
+    tags: list[TagIn] | None = Field(
+        default=None,
+        description="The tags confirmed from the preview. With them the LLM is not called again",
+    )
+
+    def confirmed_tags(self) -> list[ConfirmedTag] | None:
+        if self.tags is None:
+            return None
+        return [ConfirmedTag(t.tag, t.kind) for t in self.tags]
+
+
+# --- preview -----------------------------------------------------------------
+# Espeja QueryPlan.as_preview(): lo que ve el usuario antes de buscar (#38)
+
+
+class PreviewTagOut(BaseModel):
+    tag: str
+    source: str = Field(description="'seed' from the AST, 'llm' from the model")
+
+
+class PreviewQueryOut(BaseModel):
+    kind: str = Field(description="syntactic, conceptual, paradigm, or tiers without the LLM")
+    tags: list[PreviewTagOut] = Field(description="The tags that fit the query, in order")
+    q: str = Field(description="The search/code query it would send")
+
+
+class PreviewLlmOut(BaseModel):
+    error: str | None = Field(description="The LLM's error code, if it failed")
+
+
+class PreviewResponse(BaseModel):
+    queries: list[PreviewQueryOut]
+    llm: PreviewLlmOut
 
 
 # --- respuesta ---------------------------------------------------------------
