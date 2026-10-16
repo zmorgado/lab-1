@@ -145,6 +145,9 @@ async def main(source: str) -> None:
             f":{result.start_line}-{result.end_line}  {result.name}{also}"
             f"  queries={[query.kind for query in result.queries]}"
         )
+        # El link al subarbol, para abrirlo en el navegador
+        if first.html_url:
+            print(f"      {first.html_url}#L{result.start_line}-L{result.end_line}")
 
 
 if __name__ == "__main__":
