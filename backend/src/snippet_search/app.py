@@ -16,13 +16,14 @@ from __future__ import annotations
 
 import re
 from contextlib import asynccontextmanager
-from typing import Annotated, Any, AsyncIterator
+from typing import Annotated, Any, AsyncGenerator
 
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
 
+from .ast_grep_tags import SUPPORTED_LANGUAGES, Tiers, extract_tags
 from .config import Settings, load_settings
 from .github import GitHubClient, GitHubError, RateLimit
 from .llm_tags import GeminiTagService, LlmTagError
@@ -70,7 +71,7 @@ def create_app(settings: Settings | None = None, rank: Ranker = unixcoder_rank) 
     resolved = settings if settings is not None else load_settings()
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Un solo cliente para todo el proceso: comparte el pool de conexiones
         async with GitHubClient(resolved) as github, GeminiTagService(resolved) as tags:
             app.state.github = github
@@ -146,8 +147,10 @@ def create_app(settings: Settings | None = None, rank: Ranker = unixcoder_rank) 
 
     @app.post("/api/tags")
     async def extract_tags(tags: TagsDep, payload: TagsRequest) -> TagsResponse:
-        result = await tags.extract(payload.source, language=payload.language)
-        return TagsResponse(language=result.language, tags=result.as_dict())
+        result = await tags.extract(
+            payload.source, language=payload.language, tiers=_seed_tiers(payload)
+        )
+        return TagsResponse(language=result.language, tags=result.as_list())
 
     @app.get("/api/contents", response_class=PlainTextResponse)
     async def get_file_contents(
@@ -179,6 +182,14 @@ def create_app(settings: Settings | None = None, rank: Ranker = unixcoder_rank) 
 def _invalid(message: str) -> JSONResponse:
     """422, el mismo status que usa FastAPI para un query param invalido."""
     return JSONResponse(status_code=422, content={"message": message})
+
+
+def _seed_tiers(payload: TagsRequest) -> Tiers | None:
+    """Los tiers del AST para el LLM. Salen del extractor de Python: con otro
+    lenguaje declarado darian tags sin sentido, asi que ese va sin tiers."""
+    if payload.language and payload.language.lower() not in SUPPORTED_LANGUAGES:
+        return None
+    return extract_tags(payload.source)
 
 
 def _rate_limit_headers(rate_limit: RateLimit | None) -> dict[str, str]:

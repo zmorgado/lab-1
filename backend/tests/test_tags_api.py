@@ -42,24 +42,40 @@ def client():
 
 
 @respx.mock
-def test_the_endpoint_returns_language_and_the_five_categories(client: TestClient) -> None:
+def test_the_endpoint_returns_language_and_one_tagged_list(client: TestClient) -> None:
     respx.post(GEMINI_URL).mock(return_value=httpx.Response(200, json=_gemini_response()))
 
     # Sin 'language': el modelo lo infiere
     response = client.post("/api/tags", json={"source": SNIPPET})
 
     assert response.status_code == 200
-    # AC de #7: estructura fija y documentada, con las cinco categorias
+    # El endpoint saco los tiers del snippet: por eso sabe que tags ya eran semilla
     assert response.json() == {
         "language": "Python",
-        "tags": {
-            "api_calls": ["sorted", "items", "dict"],
-            "data_structures": ["dictionary", "list", "tuple"],
-            "paradigm": ["functional programming", "lambda", "higher-order function"],
-            "algorithm": ["dictionary sorting", "key-value sorting"],
-            "domain_keywords": ["ranking", "data manipulation"],
-        },
+        "tags": [
+            {"tag": "sorted", "kind": "syntactic", "source": "seed"},
+            {"tag": "items", "kind": "syntactic", "source": "seed"},
+            {"tag": "sort_by_value", "kind": "conceptual", "source": "llm"},
+            {"tag": "ranking", "kind": "conceptual", "source": "llm"},
+            {"tag": "dictionary", "kind": "conceptual", "source": "seed"},
+            {"tag": "lambda", "kind": "paradigm", "source": "seed"},
+            {"tag": "itemgetter", "kind": "paradigm", "source": "llm"},
+        ],
     }
+
+
+@respx.mock
+def test_another_language_goes_to_the_model_without_tiers(client: TestClient) -> None:
+    gemini = respx.post(GEMINI_URL).mock(
+        return_value=httpx.Response(200, json=_gemini_response())
+    )
+
+    response = client.post("/api/tags", json={"source": SNIPPET, "language": "Go"})
+
+    # Los tiers salen del extractor de Python: para Go no se mandan
+    prompt = json.loads(gemini.calls.last.request.content)["contents"][0]["parts"][0]["text"]
+    assert "Seed tags" not in prompt
+    assert {tag["source"] for tag in response.json()["tags"]} == {"llm"}
 
 
 def test_a_missing_source_is_a_422(client: TestClient) -> None:

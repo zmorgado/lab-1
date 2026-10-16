@@ -181,30 +181,46 @@ builtins (`print`, `len`, ...), dunders and names under 3 characters are dropped
 on the `q` value, so truncation keeps the highest tiers. It takes any tag list and
 quotes multi-word tags, so #22 can feed it the merged and edited list.
 
-The run: grep tags → query → `search/code` (first `MAX_CANDIDATE_FILES`, 20) →
-each file through `/repos/{repo}/contents/{path}` at the commit the search
-returned → AST → UniXcoder over at most `MAX_EMBEDDED_SUBTREES` (50, #18's
-ceiling) → sorted by cosine. The LLM (#7) runs alongside the search. Its tags
-only widen the AST anchors, because merging them into the query is #22's. If it
-fails, its `code` is reported and the run goes on with grep alone.
+The run: AST tiers → LLM list (#7, #22) → one `search/code` query per kind of
+tag (#19) → files merged → each file through `/repos/{repo}/contents/{path}` at
+the commit the search returned → AST → UniXcoder over at most
+`MAX_EMBEDDED_SUBTREES` (50, #18's ceiling) → sorted by cosine.
+
+- **Queries.** The LLM gets the AST tiers and returns tags of three kinds:
+  `syntactic`, `conceptual` and `paradigm`. Each kind becomes one query through
+  `build_query`, so each keeps the 6-tag and 256-character limits. A seed the LLM
+  drops, such as an internal module (`ringr_agents`), goes into none. If the LLM
+  fails or leaves nothing searchable, there is one query from the tiers (kind
+  `tiers`), and a failure's `code` is reported.
+- **One at a time.** The queries run serially, as GitHub asks to avoid its
+  secondary rate limits. Each search spends one code-search request per query,
+  out of 10 per minute. A query that fails is reported in its `error` and the
+  rest go on; the search fails only when all of them do.
+- **Merge.** Results are merged on blob `sha`, keeping a public copy over a
+  private one. Files found by more queries go first, then by their best position
+  in GitHub's results, and only the first `MAX_CANDIDATE_FILES` (20) are fetched,
+  the same budget as one query. The same count orders subtrees for the embedding
+  budget; the final order is still cosine. Each candidate lists the queries that
+  found its file.
 
 ```
 POST /api/search   {"source": "...", "language": "python"}   # language optional
-→ {"tags": [...], "tiers": {"apis": [...], "structures": [...], "domain": [...]},
-   "query": "... language:python",
-   "llm": {"tags": {...} | null, "error": "llm_unavailable" | null},
+→ {"tiers": {"apis": [...], "structures": [...], "domain": [...]},
+   "queries": [{"kind": "syntactic", "tags": [...], "q": "... language:python",
+                "error": null}, ...],
+   "llm": {"tags": [{"tag", "kind", "source"}] | null, "error": "llm_unavailable" | null},
    "snippet": {"category": "function", "fallback": false, "lines": 4},
    "anchors": [...],
-   "candidates": [{"repo", "path", "sha", "html_url", "score",
+   "candidates": [{"repo", "path", "sha", "html_url", "score", "queries",
                    "code", "kind", "name", "parent", "start_line", "end_line", "anchors"}],
    "rejected": {"A": 0, "C": 0, "B": 0, "length": 0, "budget": 0},
    "skipped": [{"repo", "path", "reason"}],
-   "results": <search/code body, unchanged>}
+   "results": {"syntactic": <search/code body, unchanged>, ...}}
 ```
 
-The shape is raw on purpose: #8 turns `candidates` into the result list (dedupe
-on `sha`, result ceiling). Private hits are never fetched; they show up in
-`skipped`.
+The shape is raw on purpose: #8 turns `candidates` into the result list (every
+repo a content appeared in, result ceiling). Private hits are never fetched;
+unless the same content is public, they show up in `skipped`.
 
 Both errors are 422s with a stable `code`, as in #7, and neither reaches GitHub:
 `nothing_to_search` (no usable tags) and `unsupported_language`. Filters (owner,
@@ -214,7 +230,7 @@ Verify it end to end against the real API, with the server running:
 
 ```
 jq -Rs '{source: .}' some_snippet.py | curl -s -X POST localhost:8000/api/search \
-  -H 'Content-Type: application/json' -d @- | jq '{tags, query, total: .results.total_count}'
+  -H 'Content-Type: application/json' -d @- | jq '{queries, totals: (.results | map_values(.total_count))}'
 ```
 
 ## AST stage (#20)
@@ -268,19 +284,28 @@ The tests run on real files in `tests/fixtures/` (CPython's `bisect`,
 `textwrap` and `numbers`, and a cookiecutter-django template). The README there
 says where each one comes from.
 
-## LLM tag service (#7)
+## LLM tag service (#7, #22)
 
-Stage 2: `POST /api/tags` takes a pasted snippet and returns the detected
-language plus the five tag categories from `docs/research/solution-schematics-v2.md`
-— `api_calls`, `data_structures`, `paradigm`, `algorithm`, `domain_keywords`. It
-lives in `llm_tags.py` (client, prompt, `TagSet`, `LlmTagError`), `tags_api.py`
-(dependency, request/response models, error handler) and the route in `app.py`. It complements the grep service (#4): grep pulls what the code says
-literally, the LLM describes what it *is*. Which tags go into a query is #19.
+Stage 2: `POST /api/tags` takes a pasted snippet, runs the AST extractor (#4) on
+it, and sends the model both the code and those tiers. The model keeps the seeds
+worth searching for, adds what they miss, and returns one list, most relevant
+first. Each tag has a `kind`, the #19 query it feeds (`syntactic`, `conceptual` or
+`paradigm`), and a `source`: `seed` if it was already among the tiers, `llm` if the
+model added it. The code sets `source`, not the model. A snippet declared in
+another language goes without tiers, because the extractor is Python-only.
+
+It lives in `llm_tags.py` (client, prompt, `TagSet`, `LlmTagError`), `tags_api.py`
+(dependency, request/response models, error handler) and the route in `app.py`.
+Merging the list with the tags the user edits is #22's.
 
 ```
 POST /api/tags   {"source": "...", "language": "Python"}   # language optional
-→ {"language": "Python", "tags": {"api_calls": [...], "data_structures": [...], ...}}
+→ {"language": "Python",
+   "tags": [{"tag": "sorted", "kind": "syntactic", "source": "seed"},
+            {"tag": "itemgetter", "kind": "paradigm", "source": "llm"}, ...]}
 ```
+
+Each kind holds at most 6 tags (`MAX_TAGS_PER_KIND`), one query's worth.
 
 **Provider**: Google Gemini (`gemini-3.8-flash`) over plain REST with `httpx`. The
 free tier needs no card, takes a JSON schema for the response and lets thinking be

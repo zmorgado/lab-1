@@ -296,17 +296,24 @@ def test_search_returns_the_tags_alongside_githubs_results(client: TestClient) -
 
     response = client.post("/api/search", json={"source": SORT_DICTIONARY})
 
-    # AC de #4: los tags que se mandaron viajan con los resultados. Ninguno de
-    # los dos items llega al AST: uno es privado y el otro no trae 'url' con ref
+    # AC de #4: los tags que se mandaron viajan con los resultados. Los dos items
+    # son el mismo contenido (mismo sha): queda el publico, que no trae 'url' con
+    # ref, asi que ninguno llega al AST
     assert response.json() == {
-        "tags": ["sorted", "items", "sort_dictionary", "lambda"],
         "tiers": {
             "apis": ["sorted", "items"],
             "structures": ["sort_dictionary", "lambda"],
             "domain": [],
         },
-        "query": "sorted items sort_dictionary lambda language:python",
-        # SETTINGS no tiene key de Gemini: la corrida sigue con el grep
+        # SETTINGS no tiene key de Gemini: una sola query, con los tiers
+        "queries": [
+            {
+                "kind": "tiers",
+                "tags": ["sorted", "items", "sort_dictionary", "lambda"],
+                "q": "sorted items sort_dictionary lambda language:python",
+                "error": None,
+            }
+        ],
         "llm": {"tags": None, "error": "llm_unavailable"},
         "snippet": {"category": "function", "fallback": False, "lines": 2},
         "anchors": ["sorted", "items", "sort_dictionary", "lambda"],
@@ -318,13 +325,8 @@ def test_search_returns_the_tags_alongside_githubs_results(client: TestClient) -
                 "path": "app/services/document_ai.py",
                 "reason": "the search result carries no ref to fetch",
             },
-            {
-                "repo": "example-org/private-sample",
-                "path": "app/services/document_ai.py",
-                "reason": "private repository",
-            },
         ],
-        "results": SEARCH_BODY,
+        "results": {"tiers": SEARCH_BODY},
     }
 
 
