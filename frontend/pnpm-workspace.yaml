@@ -1,0 +1,3 @@
+allowBuilds:
+  # Its script only copies the browser service worker; the tests run MSW in Node
+  msw: false
