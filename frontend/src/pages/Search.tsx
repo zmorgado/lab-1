@@ -1,8 +1,28 @@
 import { useState } from 'react'
+import Button from '@/components/Button'
+import Elapsed from '@/components/Elapsed'
+import Failure from '@/components/Failure'
 import SnippetForm from '@/components/SnippetForm'
+import TagConfirmation from '@/components/TagConfirmation'
+import { toTagPreview } from '@/model/Search'
+import { searchService } from '@/services/SearchService'
+import type { Step } from '@/types/Step'
 
 export default function Search() {
   const [snippet, setSnippet] = useState('')
+  const [state, setState] = useState<Step>({ step: 'editing' })
+
+  async function proposeTags() {
+    setState({ step: 'loadingTags' })
+    try {
+      const preview = toTagPreview(await searchService.preview(snippet))
+      setState({ step: 'confirming', preview })
+    } catch (error) {
+      setState({ step: 'failed', at: 'tags', error })
+    }
+  }
+
+  const editing = state.step === 'editing'
 
   return (
     <main className="mx-auto max-w-page px-5 pb-16 sm:px-9 sm:pb-24">
@@ -23,7 +43,33 @@ export default function Search() {
         </p>
       </header>
 
-      <SnippetForm snippet={snippet} onChange={setSnippet} onSubmit={() => {}} locked={false} showActions />
+      <SnippetForm
+        snippet={snippet}
+        onChange={setSnippet}
+        onSubmit={proposeTags}
+        locked={!editing}
+        showActions={editing || state.step === 'loadingTags'}
+      />
+
+      {state.step === 'loadingTags' && <Elapsed>Reading the snippet and proposing tags</Elapsed>}
+
+      {state.step === 'confirming' && (
+        <TagConfirmation
+          preview={state.preview}
+          onConfirm={() => {}}
+          onBack={() => setState({ step: 'editing' })}
+          locked={false}
+          showActions
+        />
+      )}
+
+      {state.step === 'failed' && (
+        <Failure error={state.error}>
+          <Button onClick={() => setState({ step: 'editing' })}>
+            <span aria-hidden="true">◂</span> Change the snippet
+          </Button>
+        </Failure>
+      )}
     </main>
   )
 }
