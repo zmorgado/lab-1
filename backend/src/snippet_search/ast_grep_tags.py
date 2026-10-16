@@ -64,6 +64,10 @@ class Tiers:
     apis: tuple[str, ...]
     structures: tuple[str, ...]
     domain: tuple[str, ...]
+    # Las de `apis` que son modulos importados: la seleccion las pone al final (#22)
+    imports: tuple[str, ...] = ()
+    # True si el snippet no parseo y los saco el regex
+    is_fallback: bool = False
 
     def ordered(self) -> tuple[str, ...]:
         """Todos los candidatos, nivel por nivel: el orden en que llenan la query."""
@@ -110,7 +114,8 @@ class _AstTagExtractor(ast.NodeVisitor):
             words.extend(word.lower() for word in found[:DOMAIN_WORDS_PER_DOCSTRING])
         domain = _keep_distinctive(words, exclude={*apis, *structures})
 
-        return Tiers(apis=apis, structures=structures, domain=domain)
+        imports = tuple(name for name in apis if name in self.imports)
+        return Tiers(apis=apis, structures=structures, domain=domain, imports=imports)
 
     # Importaciones: el modulo raiz, igual que el regex
     def visit_Import(self, node: ast.Import) -> None:
@@ -192,7 +197,13 @@ def _extract_tags_regex(snippet: str) -> Tiers:
         words.extend(word.lower() for word in found[:DOMAIN_WORDS_PER_DOCSTRING])
     domain = _keep_distinctive(words, exclude={*apis, *structures})
 
-    return Tiers(apis=apis, structures=structures, domain=domain)
+    return Tiers(
+        apis=apis,
+        structures=structures,
+        domain=domain,
+        imports=tuple(name for name in apis if name in imports),
+        is_fallback=True,
+    )
 
 
 def _keep_distinctive(names: Iterable[str], exclude: Container[str] = ()) -> tuple[str, ...]:

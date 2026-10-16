@@ -174,6 +174,7 @@ because it is a step of its own for the user (#38).
 | Module | Stage |
 | --- | --- |
 | `ast_grep_tags.py` | 1: `extract_tags(snippet)` → `Tiers`, the candidates in three tiers. Python only |
+| `tag_selection.py` | 2: `select(tiers, llm_tags, language)` → the pool the user edits, weighted, with the default selection (#22) |
 | `query.py` | 3: `build_query(tags, language)` → `SearchQuery` or `NothingToSearch` |
 | `ast_subtrees.py` | 4: `analyze_snippet(snippet)` → `SnippetShape`; `isolate(file, shape, anchors)` → `Isolation` |
 | `results.py` | After 5: `merge_files(bodies, limit)` → files by `sha`, no private repos; `to_results(candidates, query_text, max_results)` → `Result`s |
@@ -245,45 +246,6 @@ Both errors are 422s with a stable `code`, as in #7, and neither reaches GitHub:
 `nothing_to_search` (no usable tags) and `unsupported_language`. Filters (owner,
 repo, languages) are #19's.
 
-### Tag preview and confirmed tags (#38)
-
-The page shows the tags before spending any search budget, so stages 1–2 also
-run alone. `POST /api/search/preview` takes the same `source` and `language` and
-runs them exactly as the search does: AST tiers, then the LLM, then
-`build_query` per kind. It returns the queries the search would run, with only
-the tags that fit after the 6-tag and 256-character limits, each with its
-`source`: `seed` from the AST, `llm` from the model. It spends one LLM call and
-no GitHub request.
-
-```
-POST /api/search/preview   {"source": "...", "language": "python"}   # language optional
-→ {"queries": [{"kind": "syntactic",
-                "tags": [{"tag": "sorted", "source": "seed"}, ...],
-                "q": "sorted items language:python"}, ...],
-   "llm": {"error": null}}
-```
-
-With the model unavailable it still answers 200, with one `tiers` query from the
-AST and the LLM's code in `llm.error` (the LLM is a complement, #1). Its errors
-are the search's: `nothing_to_search` and `unsupported_language`.
-
-`POST /api/search` then takes the confirmed tags in an optional `tags` field, one
-`{"tag", "kind"}` per tag, `kind` being `syntactic`, `conceptual`, `paradigm` or
-`tiers`. With `tags`:
-
-- it builds one query per kind from them, in that order, and **does not call the
-  LLM again**, so `llm` comes back as `{"tags": null, "error": null}`;
-- the anchors are the snippet's AST `apis` and `structures`, recomputed since
-  they are deterministic and free, plus every confirmed tag;
-- an empty tag, an unknown kind or a double quote (which would break `q`) is a
-  422 with `code: invalid_tag`, before GitHub is called, and so is `tiers` mixed
-  with the model's kinds: the `tiers` query replaces those three, and together
-  they would spend four code-search requests. An empty list is
-  `nothing_to_search`.
-
-Without `tags`, the search runs the LLM itself as before, so plain curl usage
-keeps working.
-
 Verify it end to end against the real API, with the server running:
 
 ```
@@ -291,6 +253,80 @@ jq -Rs '{source: .}' some_snippet.py | curl -s -X POST localhost:8000/api/search
   -H 'Content-Type: application/json' -d @- \
   | jq '{queries, results: [.results[] | {rank, score, name}], totals: (.github | map_values(.total_count))}'
 ```
+
+### Tag preview and selected tags (#38, #22)
+
+The page shows the tags before spending any search budget, and lets the user pick
+and add them, so stages 1–2 also run alone. `POST /api/search/preview` takes the
+same `source` and `language` and runs them exactly as the search does: AST tiers,
+then the LLM, then `build_query` per kind. It spends one LLM call and no GitHub
+request, and returns:
+
+- `pool`: every tag offered, with its `kind` (the query it feeds), its `source`
+  (`seed` from the AST, `llm` from the model) and whether it is `selected` unless
+  the user changes it. `tag_selection.select` builds it, below;
+- `queries`: per kind, the selected tags that fit the 6-tag and 256-character
+  limits, the ones those limits `dropped`, and the `q` it would send (`null` when
+  none fit). Nothing is truncated silently.
+
+```
+POST /api/search/preview   {"source": "...", "language": "python"}   # language optional
+→ {"pool": [{"tag": "sorted", "kind": "syntactic", "source": "seed", "selected": true}, ...],
+   "queries": [{"kind": "syntactic", "tags": ["sorted", "items"], "dropped": [],
+                "q": "sorted items language:python"}, ...],
+   "llm": {"error": null},
+   "is_fallback": false}
+```
+
+With the model unavailable it still answers 200, with one `tiers` query from the
+AST and the LLM's code in `llm.error` (the LLM is a complement, #1).
+`is_fallback` says the snippet didn't parse and the regex extracted the AST tags.
+Its errors are the search's: `nothing_to_search` and `unsupported_language`.
+
+**The pool (#22).** `select` merges the AST seeds and the model's tags, without
+repeats (case-insensitive), into at most `POOL_SIZE` (20) tags, larger than a
+query on purpose. A weight orders it, lightest first, so whatever has to be cut
+keeps the distinctive tags. The AST tells the kinds of seed apart without
+guessing:
+
+| Weight | Seeds | Model tags without a seed |
+| --- | --- | --- |
+| 1, domain | the snippet's own `def`/`class` names, docstring words | `conceptual` |
+| 2, API | calls, `lambda` | `syntactic`, `paradigm` |
+| 3, import | imported modules (`Tiers.imports`) | |
+
+- **With the model**, its tags are all selected, each feeding the query of its
+  kind. The seeds it dropped fill the rest of the pool unselected, so an internal
+  module like `ringr_agents` only goes in if the user picks it. Each seed goes to
+  a group: names and calls `syntactic`, docstring words `conceptual`, `lambda` and
+  imports `paradigm`.
+- **Without it**, or when it leaves nothing searchable, every seed goes to the
+  `tiers` query by weight, and the ones that fit it are selected.
+
+The pool is the same whichever path extracted the seeds: `is_fallback` only
+records it. The weights are #22's decision, which put imports such as `math`
+behind the names and words that actually identify the code.
+
+Both routes take the user's selection in an optional `tags` field, one
+`{"tag", "kind"}` per tag, `kind` being `syntactic`, `conceptual`, `paradigm` or
+`tiers`. With `tags`:
+
+- **neither calls the LLM**. The preview only rebuilds `queries` from them, with
+  an empty `pool` since the client already holds it, so the page can show what
+  fits while the user edits. The search runs them, and `llm` comes back as
+  `{"tags": null, "error": null}`;
+- the queries are one per kind, in that order;
+- the anchors are the snippet's AST `apis` and `structures`, recomputed since
+  they are deterministic and free, plus every selected tag;
+- each tag is checked before GitHub is called. Empty, over 100 characters, an
+  unknown kind or a double quote (which would break `q`) is a 422 with
+  `code: invalid_tag`, and so is `tiers` mixed with the model's kinds: the `tiers`
+  query replaces those three, and together they would spend four code-search
+  requests. An empty list is `nothing_to_search`.
+
+`build_query` quotes a bare `AND`, `OR` or `NOT`, so a tag the user types is
+searched as a word instead of acting as a GitHub operator. Without `tags`, the
+search runs the LLM itself as before, so plain curl usage keeps working.
 
 ## AST stage (#20)
 

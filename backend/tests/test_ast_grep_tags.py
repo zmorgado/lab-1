@@ -15,6 +15,8 @@ def test_candidates_are_split_by_tier_in_order_of_appearance() -> None:
         apis=("operator", "sorted", "items", "itemgetter"),
         structures=("rank_by_value",),
         domain=("sort", "scores", "dictionary"),
+        # Cuales de las APIs son modulos importados: la seleccion los pone al final (#22)
+        imports=("operator",),
     )
 
 

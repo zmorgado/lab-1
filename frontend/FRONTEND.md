@@ -22,10 +22,11 @@ The backend's CORS allows the Vite dev server on port 5173 only, so run
 
 | Backend route | Step |
 | --- | --- |
-| `POST /api/search/preview` | 2: the tags the search will use, by query kind, each from the AST or the model |
+| `POST /api/search/preview` | 2: the pool of tags by query kind, each from the AST or the model; with `tags`, which of the user's selection fit each query |
 | `POST /api/search` | 3: the search, run with the confirmed `tags` |
 
-A preview spends one LLM call and no GitHub budget. A search spends up to three
+A preview spends one LLM call and no GitHub budget, and rebuilding it while the
+user edits spends neither. A search spends up to three
 code-search requests out of 10 per minute, shared by everyone, and the first one
 after a backend restart also loads UniXcoder.
 
