@@ -1,41 +1,159 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=Manrope:wght@200..800&family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');
 @import 'tailwindcss';
 
+/* ============================================================
+   DONDE VIVE LA PALETA
+
+   El bloque de tokens de abajo es copia textual de zmorgado/portfolio
+   app/globals.css, como en la Demo del detector de intrusiones: tintas
+   identicas se leen como un solo sistema, casi identicas como un error.
+
+     ground   el papel
+     ink      el texto y los trazos estructurales
+     pencil   texto secundario y datos sin novedad
+     signal   el sistema actuando: links
+     alert    la correccion: como mucho una vez por pagina, en lo
+              que no anduvo
+
+   La paleta es de zmorgado/portfolio docs/adr/0005-visual-direction-
+   derived-from-the-marks.md: se cambia alla y se copia el bloque sin
+   tocarlo. Fuera de este archivo nada usa un color crudo ni una fuente.
+   ============================================================ */
+
 :root {
-  --primary-font: 'Poppins', sans-serif;
+  color-scheme: light;
+
+  --ground: #fcfcfb;
+  --ink: #1c1b19;
+  --pencil: #6e6c68;
+  --signal: #0e6a86;
+  --alert: #b23a28;
+  --rule: #e2e0dc;
+
+  /* Motion */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --duration: 140ms;
 }
 
-body {
-  font-family: var(--primary-font);
-  background-color: #F3F4F6;
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --ground: #121211;
+    --ink: #ecebe7;
+    --pencil: #97948f;
+    --signal: #5fb2ce;
+    --alert: #e0796a;
+    --rule: #2b2a27;
+  }
 }
 
-.app-scrollbar::-webkit-scrollbar {
-  width: 6px;
-}
-.app-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-.app-scrollbar::-webkit-scrollbar-thumb {
-  background-color: transparent;
-  border-radius: 9999px;
-}
-.app-scrollbar:hover::-webkit-scrollbar-thumb {
-  background-color: #cbd5e1; /* slate-300 */
-}
-.app-scrollbar {
-  scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
-}
-.app-scrollbar:hover {
-  scrollbar-color: #cbd5e1 transparent;
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --ground: #121211;
+  --ink: #ecebe7;
+  --pencil: #97948f;
+  --signal: #5fb2ce;
+  --alert: #e0796a;
+  --rule: #2b2a27;
 }
 
-/* Fully hides the scrollbar (e.g. auto-growing input textareas) while staying scrollable */
-.no-scrollbar {
-  scrollbar-width: none;
-  -ms-overflow-style: none;
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --ground: #fcfcfb;
+  --ink: #1c1b19;
+  --pencil: #6e6c68;
+  --signal: #0e6a86;
+  --alert: #b23a28;
+  --rule: #e2e0dc;
 }
-.no-scrollbar::-webkit-scrollbar {
-  display: none;
+
+/* ============================================================
+   Tema de Tailwind
+
+   Los tokens llegan a Tailwind aca y en ningun otro lado. Su
+   paleta y sus fuentes se resetean: `text-slate-600` y `font-sans`
+   no existen, solo las cinco tintas, el rule, Spectral y Plex Mono.
+   ============================================================ */
+
+@theme {
+  --color-*: initial;
+  --font-*: initial;
+
+  --font-serif: Spectral, ui-serif, Georgia, "Times New Roman", Times, serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  /* El ancho del portfolio, y la prosa mas angosta */
+  --container-page: 840px;
+  --container-prose: 68ch;
+}
+
+@theme inline {
+  --color-ground: var(--ground);
+  --color-ink: var(--ink);
+  --color-pencil: var(--pencil);
+  --color-signal: var(--signal);
+  --color-alert: var(--alert);
+  --color-rule: var(--rule);
+
+  /* `transition-colors` con la curva y el tiempo del portfolio */
+  --default-transition-timing-function: var(--ease);
+  --default-transition-duration: var(--duration);
+}
+
+/* ============================================================
+   Base
+
+   La prosa va en la serif; la mono lleva solo datos: codigo,
+   tags, paths, rangos de lineas, scores, segundos.
+   ============================================================ */
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--font-serif);
+    font-size: 18px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a {
+    color: var(--signal);
+    text-decoration: none;
+    border-bottom: 1px solid color-mix(in oklab, var(--signal) 40%, transparent);
+    transition: border-color var(--duration) var(--ease);
+  }
+
+  a:hover {
+    border-bottom-color: var(--signal);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--signal);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  .font-mono {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -14,7 +14,8 @@ see the stack decision on #3 for why it is Python rather than Node/TS:
 landed the embedding stage as a library. #7 added the LLM tags, and #4 the grep
 tags with the general search endpoint. #20 added the AST stage and wired every
 stage into one run behind `/api/search`, and #8 turned its output into the ranked
-result list. The frontend side of #19 and error codes (#9) are still to come.
+result list. #38 put the frontend on it, with a tag preview the user confirms
+before the search runs. Filters (#19) and error codes (#9) are still to come.
 Issue #1 is the spec.
 
 ## Layout
@@ -95,12 +96,13 @@ Enterprise, or a fake in tests).
 | `GET /health` | `{"status": "ok"}` |
 | `GET /api/search/code?q=&per_page=&page=` | GitHub's `search/code` response **unchanged** |
 | `GET /api/contents?repo=&path=&ref=` | the file's source as `text/plain` |
+| `POST /api/search/preview` | the queries a search would run, each tag with its source; spends no GitHub budget (#38) |
 | `POST /api/search` | the full run: tags, queries, the ranked results (#8) and GitHub's raw bodies (see below) |
 
 The proxy endpoints are a thin pass-through: they attach the credential and
 forward. They do not build queries or reshape results (#8), and GitHub's error
 status and body are relayed as-is for #9 to map to stable error codes. Only
-`/api/search` builds a query.
+`/api/search` and its preview build queries.
 
 `/api/contents` base64-decodes GitHub's envelope and returns just the source,
 which is what the AST stage (#20) needs; `search/code` gives back repo, path and
@@ -165,7 +167,9 @@ with the `.pth` quirk above, prefix it with `PYTHONPATH=src`.
 Endpoints follow the user's steps, not the internal stages. The stages are plain
 modules that don't know each other, and `pipeline.py` chains them, so the route
 stays thin. Every later stage plugs into `pipeline.search()`, not into a new
-endpoint: the user's edited tag list (#22) and filters (#19).
+endpoint: filters (#19), and the user's edits to the tag list (#22), which reach
+it as the confirmed `tags`. The one route beside it, the tag preview, exists
+because it is a step of its own for the user (#38).
 
 | Module | Stage |
 | --- | --- |
@@ -173,8 +177,8 @@ endpoint: the user's edited tag list (#22) and filters (#19).
 | `query.py` | 3: `build_query(tags, language)` → `SearchQuery` or `NothingToSearch` |
 | `ast_subtrees.py` | 4: `analyze_snippet(snippet)` → `SnippetShape`; `isolate(file, shape, anchors)` → `Isolation` |
 | `results.py` | After 5: `merge_files(bodies, limit)` → files by `sha`, no private repos; `to_results(candidates, query_text, max_results)` → `Result`s |
-| `pipeline.py` | `search(github, source, language, llm=, rank=, max_results=)`: the whole run, below |
-| `search_api.py` | `/api/search`'s request and response models, typed in `/openapi.json` |
+| `pipeline.py` | `preview(source, language, llm=)` → `QueryPlan`, stages 1–2 alone; `search(github, source, language, llm=, rank=, max_results=, tags=)`: the whole run, below |
+| `search_api.py` | the request and response models of `/api/search` and its preview, typed in `/openapi.json` |
 
 Tags come in three tiers, APIs (imports and calls), then structures (own
 `def`/`class` names and `lambda`), then a few docstring words. Keywords, generic
@@ -239,7 +243,46 @@ included.
 
 Both errors are 422s with a stable `code`, as in #7, and neither reaches GitHub:
 `nothing_to_search` (no usable tags) and `unsupported_language`. Filters (owner,
-repo, languages) and the frontend wiring are #19's.
+repo, languages) are #19's.
+
+### Tag preview and confirmed tags (#38)
+
+The page shows the tags before spending any search budget, so stages 1–2 also
+run alone. `POST /api/search/preview` takes the same `source` and `language` and
+runs them exactly as the search does: AST tiers, then the LLM, then
+`build_query` per kind. It returns the queries the search would run, with only
+the tags that fit after the 6-tag and 256-character limits, each with its
+`source`: `seed` from the AST, `llm` from the model. It spends one LLM call and
+no GitHub request.
+
+```
+POST /api/search/preview   {"source": "...", "language": "python"}   # language optional
+→ {"queries": [{"kind": "syntactic",
+                "tags": [{"tag": "sorted", "source": "seed"}, ...],
+                "q": "sorted items language:python"}, ...],
+   "llm": {"error": null}}
+```
+
+With the model unavailable it still answers 200, with one `tiers` query from the
+AST and the LLM's code in `llm.error` (the LLM is a complement, #1). Its errors
+are the search's: `nothing_to_search` and `unsupported_language`.
+
+`POST /api/search` then takes the confirmed tags in an optional `tags` field, one
+`{"tag", "kind"}` per tag, `kind` being `syntactic`, `conceptual`, `paradigm` or
+`tiers`. With `tags`:
+
+- it builds one query per kind from them, in that order, and **does not call the
+  LLM again**, so `llm` comes back as `{"tags": null, "error": null}`;
+- the anchors are the snippet's AST `apis` and `structures`, recomputed since
+  they are deterministic and free, plus every confirmed tag;
+- an empty tag, an unknown kind or a double quote (which would break `q`) is a
+  422 with `code: invalid_tag`, before GitHub is called, and so is `tiers` mixed
+  with the model's kinds: the `tiers` query replaces those three, and together
+  they would spend four code-search requests. An empty list is
+  `nothing_to_search`.
+
+Without `tags`, the search runs the LLM itself as before, so plain curl usage
+keeps working.
 
 Verify it end to end against the real API, with the server running:
 

@@ -78,9 +78,9 @@ A GitHub-backed search engine: paste a snippet, get back ranked code on GitHub t
 4. **AST** (#20) — the same GREP service parses the candidates, isolates subtrees by construct category, tag anchors and completeness, and prunes by length. It also produces the AST of the pasted snippet.
 5. **Embeddings** (#18, #21) — UniXcoder embeds the snippet and the surviving candidates; cosine similarity ranks them. This is where "different text, same function" gets caught.
 
-Then results (#8, #23): one ranked, deduplicated list with repo, path, the matching snippet, scores and the query that found it.
+Then results (#8, #38): one ranked, deduplicated list with repo, path, the matching snippet, scores and the query that found it.
 
-**Endpoints follow the user's steps, not the stages.** Each stage is a plain backend module, and `pipeline.py` chains them behind `POST /api/search`. A new stage plugs into `pipeline.search()`; a new endpoint is only for a new user step, like the tag preview #22 needs before searching.
+**Endpoints follow the user's steps, not the stages.** Each stage is a plain backend module, and `pipeline.py` chains them behind `POST /api/search`. A new stage plugs into `pipeline.search()`; a new endpoint is only for a new user step, like the tag preview (`POST /api/search/preview`, #38) the user confirms before searching. The confirmed tags go back in `/api/search`'s `tags` field, and the LLM isn't called twice.
 
 The diagram is `docs/diagrams/lab-1.architecture.html`, generated from the JSON beside it with the `archify` skill.
 
@@ -96,31 +96,38 @@ The diagram is `docs/diagrams/lab-1.architecture.html`, generated from the JSON 
 
 Everything in this section lives under `frontend/`, and the paths below are relative to it.
 
-React 19, Vite 8, Tailwind v4 (via `@tailwindcss/vite`, not a PostCSS config), react-router v8 (`createBrowserRouter` in `src/router/`), axios, Phosphor icons. `@/` is aliased to `src/` in both `vite.config.ts` and the tsconfigs — use it rather than deep relative paths.
+React 19, Vite 8, Tailwind v4 (via `@tailwindcss/vite`, not a PostCSS config), axios, and `prism-react-renderer` for highlighting. One page, no router. `@/` is aliased to `src/` in both `vite.config.ts` and the tsconfigs — use it rather than deep relative paths.
+
+The page talks only to our backend, at `VITE_API_URL` (default `http://127.0.0.1:8000`, `src/constants/api.ts`), and knows nothing about GitHub's API. #38 built it; filters (#19), tag editing (#22) and the error taxonomy (#9) are still to come.
 
 The directory names encode a layering that is worth respecting:
 
-- `types/` — domain shapes the UI consumes. `jsons/` — raw GitHub response shapes, kept separate.
-- `model/` — no classes; pure query construction (`SearchQuery.ts`) and raw→domain mapping (`Repository.ts` / `toRepository`). The boundary between `jsons/` and `types/` is crossed **here and only here**.
-- `services/` — axios calls. `common.ts::getAxiosData` is the single error funnel: it unwraps GitHub's error body (`errors[].message` ?? `message`) and rethrows a plain `Error`, so callers never touch `AxiosError`.
-- `utility/` — pure helpers *and* React hooks (`UseDismissable`, `UseFocusWhen`, `UseScrollIntoView`), despite the name.
-- `components/`, `pages/`, `layouts/` — presentation. `pages/Search.tsx` holds essentially all search state and orchestration.
+- `jsons/` — raw backend shapes, mirroring `/openapi.json` with only the fields read. `types/` — domain shapes the UI consumes.
+- `model/` — no classes; `model/Search.ts` is the raw→domain mapping, and the boundary between `jsons/` and `types/` is crossed **here and only here**. Grouping results by repository happens here too.
+- `services/` — axios calls. `common.ts::getAxiosData` is the single error funnel: every failed call becomes an `ApiError` carrying the backend's stable `code` (if any) and the status, or `null` for no response. Callers never touch `AxiosError`.
+- `utility/` — pure helpers. `ErrorCopy.ts` keys the user-facing copy by `code`; an unreachable backend has its own line, anything else a generic one, and neither the backend's `message` nor GitHub's text is ever shown.
+- `components/`, `pages/` — presentation. `pages/Search.tsx` holds the step state and the two calls.
 
 There is no `README.md`: #2 renamed the stock Vite template readme to `FRONTEND.md` (now `frontend/FRONTEND.md`) and replaced it with real frontend docs.
 
-### The search flow, and why most of it is leaving
+### The three steps
 
-`Search.tsx` drives everything today: `buildQueryString` → client-side guards → `buildSearchQuery` → `searchRepoService.search` → `toSearchResult` → render. Chat state is a `Message` discriminated union (`user` | assistant `loading`/`error`/`done`), and a pending assistant message is swapped in place by id once the request settles — keep that shape when adding states.
+`Search.tsx` keeps the snippet in its own state and everything else in one `Step` union (`types/Step.ts`): editing → loadingTags → confirming → searching → done, or failed (which step, and the error). Keep that shape when adding states.
 
-**#19 moves the query building and the GitHub call to the backend.** The backend side already exists: #4 added `POST /api/search`, and #19 adds the filters to it and points the frontend there. The frontend keeps the chat state and the rendering, and stops knowing GitHub's URL. So treat everything below as a description of current code, not as a design to extend:
+1. **Snippet.** Pasted, or a `.py` file read into the same box. It is sent **untrimmed**: trimming strips the first line's indentation and breaks a pasted method.
+2. **Tags.** `POST /api/search/preview` returns the queries the search would run; the page shows them by kind, each tag marked AST or model, and notes when the model was unavailable. Confirming sends exactly those tags back in `/api/search`'s `tags` field, so the LLM isn't called twice.
+3. **Results.** Each result is a subtree that may live in several repos (same blob). `toSearchOutcome` places it once, under the first of its `locations`, and lists the rest as "also in". Repos order by their best cosine, files and subtrees within them by cosine, ties by name.
 
-- **It calls `search/repositories`, not `search/code`.** The pipeline is about code search; this is the wrong endpoint.
-- **The user's pasted message is not in the query yet** — `buildQueryString(_message, filters)` ignores its first argument (explicit `TODO`). Searches are driven purely by the owner/repoName/languages filters.
-- **Repeated qualifiers act as OR** (`language:Go language:Rust`). The literal word `OR` does not work on qualifiers — GitHub answers "Logical operators only apply to text, not to qualifiers".
-- Values containing whitespace must be quoted (`language:"Jupyter Notebook"`); `URLSearchParams` handles the rest of the encoding so `C#`/`C++` don't break the URL.
-- `MAX_QUERY_LENGTH` (256) is checked against the **`q` value alone**, before the URL is assembled.
-- Only `owner` is validated (`OWNER_PATTERN`), because it goes out as a `user:` qualifier and a bad value yields 422; `repoName` travels as free text with `in:name` and can't break the query.
-- Requests are **unauthenticated** — no token is attached, so expect the low anonymous rate limit. `toSearchErrorMessage` maps GitHub's raw English error text to user-facing copy by substring matching (`"cannot be searched"`, `"longer than 256"`, `"rate limit"`); that coupling is brittle and #9 replaces it with error codes from the backend.
+Both waits count elapsed seconds and lock the controls. Nothing found is a plain sentence, never the error style.
+
+### Visual system
+
+The token layer at the top of `src/index.css` is the portfolio's (`zmorgado/portfolio`, `app/globals.css`), copied verbatim; its ADR 0005 owns the palette. Change it there, then copy the block down. Tailwind sees the tokens through `@theme`, with its own palette and font stacks reset to `initial`, so `text-pencil` exists and `text-slate-600` doesn't. No raw hex outside that file (the favicon carries literals, with a comment saying why).
+
+- Spectral for prose, IBM Plex Mono for data only: code, tags, paths, line ranges, scores, seconds.
+- `--signal` for links and the system acting, `--pencil` for secondary text, `--alert` at most once, on a failed step.
+- No shadows, no filled cards, radius at most 2px. Colour transitions only; nothing loops. The page follows the system theme.
+- Code highlighting reads the tokens too: comments and docstrings in pencil, keywords at 600, the rest ink.
 
 ## Querying GitHub code search
 
