@@ -15,7 +15,7 @@ segundos que tarda el modelo.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from types import TracebackType
 from typing import Any, Final
 
@@ -339,11 +339,14 @@ def _seed_lines(tiers: Tiers | None) -> str:
     """Los tiers como los lee el modelo: un renglon por tier."""
     if tiers is None:
         return ""
-    # Solo los tiers de tags: si Tiers suma flags (#22 pide is_fallback), no van
+    # Solo los tres tiers: `imports` repite parte de `apis` e `is_fallback` es un flag (#22)
     lines = [
         f"- {name}: {', '.join(tags) or '(none)'}"
-        for name, tags in asdict(tiers).items()
-        if isinstance(tags, tuple)
+        for name, tags in (
+            ("apis", tiers.apis),
+            ("structures", tiers.structures),
+            ("domain", tiers.domain),
+        )
     ]
     return "Seed tags:\n" + "\n".join(lines) + "\n\n"
 

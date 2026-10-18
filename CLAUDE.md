@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `main` carries everything: the design sources plus the code, since `feature/initial-frontend` was merged in PR #16. Two codebases sit side by side, with separate toolchains:
 
 - **`frontend/`** — the React + TypeScript + Vite frontend (`src/`, `package.json`, pnpm).
-- **`backend/`** — the Python service (`pyproject.toml`, uv). It will hold the whole pipeline: proxy, tag extraction, AST stage and embeddings. So far, in `src/snippet_search/`: the proxy from #3, the LLM tags from #7, the grep tags, query building and pipeline from #4, the UniXcoder embedding stage from #21 in `embeddings/`, the AST stage from #20 in `ast_subtrees.py`, which also wired every stage into one run behind `POST /api/search`, and the ranked result list from #8 in `results.py`.
+- **`backend/`** — the Python service (`pyproject.toml`, uv). It will hold the whole pipeline: proxy, tag extraction, AST stage and embeddings. So far, in `src/snippet_search/`: the proxy from #3, the LLM tags from #7, the grep tags, query building and pipeline from #4, the tag pool the user edits from #22 in `tag_selection.py`, the UniXcoder embedding stage from #21 in `embeddings/`, the AST stage from #20 in `ast_subtrees.py`, which also wired every stage into one run behind `POST /api/search`, and the ranked result list from #8 in `results.py`.
 - **`docs/research/`** — the design sources: ~~`solution-schematics-v2.md`~~, `multiple-snippet-sorting-solution.md`, `unixcoder-verificacion.md`, the reference PDFs, `discussion.txt`, `tests.md` and the `generacion-de-tags-query.py` sketch. Committed sources, not generated output — cite them rather than re-deriving.
 - **`docs/diagrams/`** — the architecture diagram (`lab-1.architecture.html`, generated from `lab-1.architecture.json`).
 - **`docs/agents/`** — how agent skills should use this repo's tracker, labels and domain docs.
@@ -73,7 +73,7 @@ uv run pytest
 A GitHub-backed search engine: paste a snippet, get back ranked code on GitHub that does the same thing. Five stages, each matching on something different ~~(`docs/research/solution-schematics-v2.md`)~~:
 
 1. **Tags** (#4, #7) — the GREP service pulls APIs, structures and domain words out of the snippet with regex. An LLM service names what the code *is*: algorithm, data structures, paradigm, calls. Grep is the baseline and works alone; the LLM is a complement.
-2. **Tag selection** (#22) — both tag sources merge into one tier-ordered list, and the user can drop tags or add their own before searching.
+2. **Tag selection** (#22) — both tag sources merge into one weighted pool of up to 20 (`tag_selection.py`: own names and docstring words, then calls, then imports), and the user picks tags and adds their own before searching.
 3. **Code search** (#3, #19) — the tags become a `search/code` query, run server-side through an authenticated proxy. Cheap and imprecise on purpose: it just cuts GitHub down to a handful of candidates.
 4. **AST** (#20) — the same GREP service parses the candidates, isolates subtrees by construct category, tag anchors and completeness, and prunes by length. It also produces the AST of the pasted snippet.
 5. **Embeddings** (#18, #21) — UniXcoder embeds the snippet and the surviving candidates; cosine similarity ranks them. This is where "different text, same function" gets caught.
@@ -98,14 +98,14 @@ Everything in this section lives under `frontend/`, and the paths below are rela
 
 React 19, Vite 8, Tailwind v4 (via `@tailwindcss/vite`, not a PostCSS config), axios, and `prism-react-renderer` for highlighting. One page, no router. `@/` is aliased to `src/` in both `vite.config.ts` and the tsconfigs — use it rather than deep relative paths.
 
-The page talks only to our backend, at `VITE_API_URL` (default `http://127.0.0.1:8000`, `src/constants/api.ts`), and knows nothing about GitHub's API. #38 built it; filters (#19), tag editing (#22) and the error taxonomy (#9) are still to come.
+The page talks only to our backend, at `VITE_API_URL` (default `http://127.0.0.1:8000`, `src/constants/api.ts`), and knows nothing about GitHub's API. #38 built it and #22 added tag editing; filters (#19) and the error taxonomy (#9) are still to come.
 
 The directory names encode a layering that is worth respecting:
 
 - `jsons/` — raw backend shapes, mirroring `/openapi.json` with only the fields read. `types/` — domain shapes the UI consumes.
 - `model/` — no classes; `model/Search.ts` is the raw→domain mapping, and the boundary between `jsons/` and `types/` is crossed **here and only here**. Grouping results by repository happens here too.
 - `services/` — axios calls. `common.ts::getAxiosData` is the single error funnel: every failed call becomes an `ApiError` carrying the backend's stable `code` (if any) and the status, or `null` for no response. Callers never touch `AxiosError`.
-- `utility/` — pure helpers. `ErrorCopy.ts` keys the user-facing copy by `code`; an unreachable backend has its own line, anything else a generic one, and neither the backend's `message` nor GitHub's text is ever shown.
+- `utility/` — pure helpers. `TagEdits.ts` toggles and adds tags on the domain shape. `ErrorCopy.ts` keys the user-facing copy by `code`; an unreachable backend has its own line, anything else a generic one, and neither the backend's `message` nor GitHub's text is ever shown.
 - `components/`, `pages/` — presentation. `pages/Search.tsx` holds the step state and the two calls.
 
 There is no `README.md`: #2 renamed the stock Vite template readme to `FRONTEND.md` (now `frontend/FRONTEND.md`) and replaced it with real frontend docs.
@@ -115,7 +115,7 @@ There is no `README.md`: #2 renamed the stock Vite template readme to `FRONTEND.
 `Search.tsx` keeps the snippet in its own state and everything else in one `Step` union (`types/Step.ts`): editing → loadingTags → confirming → searching → done, or failed (which step, and the error). Keep that shape when adding states.
 
 1. **Snippet.** Pasted, or a `.py` file read into the same box. It is sent **untrimmed**: trimming strips the first line's indentation and breaks a pasted method.
-2. **Tags.** `POST /api/search/preview` returns the queries the search would run; the page shows them by kind, each tag marked AST or model, and notes when the model was unavailable. Confirming sends exactly those tags back in `/api/search`'s `tags` field, so the LLM isn't called twice.
+2. **Tags.** `POST /api/search/preview` returns a pool of tags by kind, each marked AST or model and selected or not; the page notes when the model was unavailable and when the snippet didn't parse. The user toggles tags and adds their own, one input per group, so a tag's kind is its group (#22). After each edit the page sends the selection back to the preview, which rebuilds the queries without the model and says which tags won't fit; only the latest answer counts. Confirming sends exactly the selected tags in `/api/search`'s `tags` field, so the LLM isn't called twice.
 3. **Results.** Each result is a subtree that may live in several repos (same blob). `toSearchOutcome` places it once, under the first of its `locations`, and lists the rest as "also in". Repos order by their best cosine, files and subtrees within them by cosine, ties by name.
 
 Both waits count elapsed seconds and lock the controls. Nothing found is a plain sentence, never the error style.

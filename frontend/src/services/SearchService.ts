@@ -15,6 +15,13 @@ class SearchService {
     )
   }
 
+  // Rearma las queries con los tags elegidos, sin el modelo: dice cuales no entran
+  async plan(source: string, tags: ConfirmedTagBody[]) {
+    return await getAxiosData(() =>
+      backend.post<PreviewResponse>('/api/search/preview', { source, language: LANGUAGE, tags }),
+    )
+  }
+
   // Con los tags confirmados el backend no vuelve a llamar al modelo
   async search(source: string, tags: ConfirmedTagBody[]) {
     return await getAxiosData(() =>

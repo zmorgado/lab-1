@@ -11,16 +11,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from .pipeline import MAX_EMBEDDED_SUBTREES, TAG_KINDS, ConfirmedTag
+from .pipeline import MAX_EMBEDDED_SUBTREES, TAG_KINDS, SelectedTag
 from .results import DEFAULT_MAX_RESULTS
 from .tags_api import TagItem
-
-
-class PreviewRequest(BaseModel):
-    source: str = Field(description="The pasted snippet, as text")
-    language: str = Field(
-        default="python", description="Only Python for now; case-insensitive"
-    )
 
 
 class TagIn(BaseModel):
@@ -28,6 +21,22 @@ class TagIn(BaseModel):
     # code estable del pipeline, no el 422 generico de FastAPI
     tag: str
     kind: str = Field(description=f"The query it feeds: {', '.join(TAG_KINDS)}")
+
+
+class PreviewRequest(BaseModel):
+    source: str = Field(description="The pasted snippet, as text")
+    language: str = Field(
+        default="python", description="Only Python for now; case-insensitive"
+    )
+    tags: list[TagIn] | None = Field(
+        default=None,
+        description="The tags the user selected. With them the LLM is not called again",
+    )
+
+    def selected_tags(self) -> list[SelectedTag] | None:
+        if self.tags is None:
+            return None
+        return [SelectedTag(t.tag, t.kind) for t in self.tags]
 
 
 class SearchRequest(PreviewRequest):
@@ -38,30 +47,26 @@ class SearchRequest(PreviewRequest):
         le=MAX_EMBEDDED_SUBTREES,
         description=f"How many results to return, 1 to {MAX_EMBEDDED_SUBTREES}",
     )
-    tags: list[TagIn] | None = Field(
-        default=None,
-        description="The tags confirmed from the preview. With them the LLM is not called again",
-    )
-
-    def confirmed_tags(self) -> list[ConfirmedTag] | None:
-        if self.tags is None:
-            return None
-        return [ConfirmedTag(t.tag, t.kind) for t in self.tags]
 
 
 # --- preview -----------------------------------------------------------------
 # Espeja QueryPlan.as_preview(): lo que ve el usuario antes de buscar (#38)
 
 
-class PreviewTagOut(BaseModel):
+class PoolTagOut(BaseModel):
     tag: str
+    kind: str = Field(description="The query it feeds")
     source: str = Field(description="'seed' from the AST, 'llm' from the model")
+    selected: bool = Field(description="Whether it goes into the queries unless the user changes it")
 
 
 class PreviewQueryOut(BaseModel):
     kind: str = Field(description="syntactic, conceptual, paradigm, or tiers without the LLM")
-    tags: list[PreviewTagOut] = Field(description="The tags that fit the query, in order")
-    q: str = Field(description="The search/code query it would send")
+    tags: list[str] = Field(description="The selected tags that fit the query, in order")
+    dropped: list[str] = Field(
+        description="Selected tags left out by the 6-tag or 256-character limit"
+    )
+    q: str | None = Field(description="The search/code query it would send; null if none fit")
 
 
 class PreviewLlmOut(BaseModel):
@@ -69,8 +74,12 @@ class PreviewLlmOut(BaseModel):
 
 
 class PreviewResponse(BaseModel):
+    pool: list[PoolTagOut] = Field(description="Every tag offered; empty when `tags` were sent")
     queries: list[PreviewQueryOut]
     llm: PreviewLlmOut
+    is_fallback: bool = Field(
+        description="The snippet didn't parse, so the regex extracted the AST tags"
+    )
 
 
 # --- respuesta ---------------------------------------------------------------
