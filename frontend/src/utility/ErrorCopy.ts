@@ -61,17 +61,95 @@ const COPY: Record<string, string> = {
 const GENERIC =
   'Something went wrong on the way. Try again in a while; the GitHub budget is shared by everyone, so waiting a minute often helps.'
 
-export function copyForCode(code: string | null): string {
-  return (code !== null && COPY[code]) || GENERIC
+// === Como se imprime la falla =================================================
+//
+// La taxonomia no decide solo *que dice* la copy, tambien *como se ve*. Tres
+// familias, por quien tiene que actuar:
+//
+//   correctable  lo cambia el usuario (snippet o tags)     -> --signal
+//   transient    nadie: se espera (presupuesto/proveedor)  -> --pencil
+//   setup        lo arregla quien corre el servicio        -> --alert
+//
+// Un code desconocido cae en `setup` a proposito: ante la duda conviene que lo
+// mire un humano, y no mandarlo a "espera un rato" cuando nunca se arregla solo.
+export type Severity = 'correctable' | 'transient' | 'setup'
+
+const SEVERITY: Record<string, Severity> = {
+  // El usuario cambia algo y vuelve a probar
+  query_invalid: 'correctable',
+  invalid_tag: 'correctable',
+  unsupported_language: 'correctable',
+  nothing_to_search: 'correctable',
+  empty_source: 'correctable',
+  // Nada que arreglar: el presupuesto compartido o el proveedor estan ocupados
+  rate_limited: 'transient',
+  llm_quota_exhausted: 'transient',
+  llm_unavailable: 'transient',
+  llm_request_failed: 'transient',
+  llm_malformed_response: 'transient',
+  upstream_unavailable: 'transient',
+  content_unusable: 'transient',
+  // Configuracion: lo arregla quien corre el servicio, no el usuario
+  unauthenticated: 'setup',
+  llm_not_configured: 'setup',
+  llm_auth: 'setup',
+  service_unreachable: 'setup',
+}
+
+export function severityFor(code: string | null): Severity {
+  return (code !== null && SEVERITY[code]) || 'setup'
+}
+
+// El nombre corto de cada code: la etiqueta mono de la linea de estado y el
+// titulo del popup. La oracion larga va abajo, como copy
+const TYPE_LABEL: Record<string, string> = {
+  service_unreachable: 'Service unreachable',
+  unauthenticated: 'Setup · GitHub token',
+  rate_limited: 'Rate limited',
+  query_invalid: 'Invalid query',
+  upstream_unavailable: 'GitHub unavailable',
+  content_unusable: 'File unreadable',
+  nothing_to_search: 'Nothing to search',
+  unsupported_language: 'Unsupported language',
+  invalid_tag: 'Invalid tag',
+  empty_source: 'Empty snippet',
+  llm_not_configured: 'Model · not configured',
+  llm_auth: 'Model · key rejected',
+  llm_quota_exhausted: 'Model · quota spent',
+  llm_unavailable: 'Model unavailable',
+  llm_malformed_response: 'Model · bad answer',
+  llm_request_failed: 'Model · request failed',
+}
+
+export function typeLabel(code: string | null): string {
+  return (code !== null && TYPE_LABEL[code]) || 'Something went wrong'
+}
+
+// Que significa la familia, para el popup: la copy dice que hacer, esto por que
+const SEVERITY_NOTE: Record<Severity, string> = {
+  correctable: 'Something in the snippet or the tags has to change before this can run again.',
+  transient: 'Nothing here is broken: the shared budget or the provider is busy. Waiting clears it.',
+  setup: 'A credential or the service itself has to be fixed before this step can run.',
+}
+
+export function severityNote(severity: Severity): string {
+  return SEVERITY_NOTE[severity]
+}
+
+// El code estable del error. Un backend al que no llegamos no manda code: lo
+// sintetizamos como `service_unreachable`, el mismo que ya usa la copy. Devuelve
+// null solo para lo que no es un error de un llamado (un bug de JS, por ejemplo)
+export function errorCode(error: unknown): string | null {
+  if (error instanceof ApiError && error.status === null) return 'service_unreachable'
+  return error instanceof ApiError ? error.code : null
 }
 
 export function errorCopy(error: unknown): string {
-  // Un backend al que no llegamos no es un codigo: es nuestro servicio caido
-  if (error instanceof ApiError && error.status === null) {
-    return COPY.service_unreachable
-  }
-  const code = error instanceof ApiError ? error.code : null
-  return copyForCode(code)
+  return copyForCode(errorCode(error))
+}
+
+export function copyForCode(code: string | null): string {
+  return (code !== null && COPY[code]) || GENERIC
 }
 
 // El modelo es un complemento (#1): cuando falla, la busqueda sigue con los tags

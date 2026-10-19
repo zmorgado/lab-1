@@ -176,6 +176,8 @@ describe('confirming the tags', () => {
     await proposeTags(user)
 
     expect(await screen.findByText(copy)).toBeTruthy()
+    // La nota del modelo tambien lleva el code, para saber de donde viene
+    expect(screen.getByText(code)).toBeTruthy()
     expect(tagsOf(/syntax tree/i)).toEqual(['sorted AST', 'rank AST'])
     expect(screen.getByRole('button', { name: /search with these tags/i })).toHaveProperty('disabled', false)
   })
@@ -550,6 +552,36 @@ describe('explaining each failure', () => {
     expect(alert.textContent).toMatch(about)
     // La copy sale del code, nunca del message del backend
     expect(screen.queryByText(/backend wording/i)).toBeNull()
+  })
+
+  it.each([
+    ['query_invalid', 'Invalid query', 'correctable'],
+    ['rate_limited', 'Rate limited', 'transient'],
+    ['unauthenticated', 'Setup · GitHub token', 'setup'],
+  ])('prints %s as a typed line, with its code, not one red paragraph', async (code, label, severity) => {
+    const alert = await failTheSearch({ code, message: 'Ignored.' })
+
+    expect(alert.textContent).toMatch(label)
+    // El code queda a la vista: el tipo no es una frase, es un code estable
+    expect(alert.textContent).toMatch(code)
+    // El tono vive en la linea; el texto sigue siendo la copy y el label
+    expect(alert.querySelector(`[data-severity="${severity}"]`)).toBeTruthy()
+  })
+
+  it('opens the error type in a popup over the page', async () => {
+    const alert = await failTheSearch({ code: 'unauthenticated', message: 'Ignored.' })
+    const user = userEvent.setup()
+
+    await user.click(within(alert).getByRole('button', { name: /setup · github token/i }))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText(/setup · github token/i)).toBeTruthy()
+    expect(within(dialog).getByText(/unauthenticated/)).toBeTruthy()
+    // El popup agrega la familia: setup lo arregla quien corre el servicio
+    expect(within(dialog).getByText(/has to be fixed/i)).toBeTruthy()
+
+    await user.click(within(dialog).getByRole('button', { name: /close/i }))
+    expect((dialog as HTMLDialogElement).open).toBe(false)
   })
 
   it('keeps a network failure apart from a search that found nothing', async () => {

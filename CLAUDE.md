@@ -105,8 +105,8 @@ The directory names encode a layering that is worth respecting:
 - `jsons/` — raw backend shapes, mirroring `/openapi.json` with only the fields read. `types/` — domain shapes the UI consumes.
 - `model/` — no classes; `model/Search.ts` is the raw→domain mapping, and the boundary between `jsons/` and `types/` is crossed **here and only here**. Grouping results by repository happens here too.
 - `services/` — axios calls. `common.ts::getAxiosData` is the single error funnel: every failed call becomes an `ApiError` carrying the backend's stable `code` (if any) and the status, or `null` for no response. Callers never touch `AxiosError`.
-- `utility/` — pure helpers. `TagEdits.ts` toggles and adds tags on the domain shape. `ErrorCopy.ts` keys the user-facing copy by `code`; an unreachable backend has its own line, anything else a generic one, and neither the backend's `message` nor GitHub's text is ever shown. The model's failures on the results step have their own copy there, since the search itself didn't fail.
-- `components/`, `pages/` — presentation. `pages/Search.tsx` holds the step state and the two calls.
+- `utility/` — pure helpers. `TagEdits.ts` toggles and adds tags on the domain shape. `ErrorCopy.ts` keys the user-facing copy by `code`, and also how each failure is printed: a `Severity` per code (`correctable` → the user changes the snippet or the tags, `transient` → nobody, wait, `setup` → whoever runs the service fixes a credential), a short type label and a one-line note per family. Neither the backend's `message` nor GitHub's text is ever shown. The model's failures on the results step have their own copy there, since the search itself didn't fail.
+- `components/`, `pages/` — presentation. `pages/Search.tsx` holds the step state and the two calls. `components/StatusLine.tsx` prints a failure as a typed line — tone, type and stable code, then the copy — and `components/ErrorDialog.tsx` opens the type's family in a native `<dialog>` when that label is clicked.
 
 There is no `README.md`: #2 renamed the stock Vite template readme to `FRONTEND.md` (now `frontend/FRONTEND.md`) and replaced it with real frontend docs.
 
@@ -125,7 +125,7 @@ Both waits count elapsed seconds and lock the controls. Nothing found is a plain
 The token layer at the top of `src/index.css` is the portfolio's (`zmorgado/portfolio`, `app/globals.css`), copied verbatim; its ADR 0005 owns the palette. Change it there, then copy the block down. Tailwind sees the tokens through `@theme`, with its own palette and font stacks reset to `initial`, so `text-pencil` exists and `text-slate-600` doesn't. No raw hex outside that file (the favicon carries literals, with a comment saying why).
 
 - Spectral for prose, IBM Plex Mono for data only: code, tags, paths, line ranges, scores, seconds.
-- `--signal` for links and the system acting (including the lines the model underlines), `--pencil` for secondary text, `--alert` at most once, on a failed step.
+- `--signal` for links, the system acting (including the lines the model underlines) and a correctable failure; `--pencil` for secondary text and a transient failure; `--alert` at most once, on a setup failure that stops the step. A failure always prints its type and stable code next to the tone, so colour is never the only signal (WCAG 1.4.1).
 - No shadows, no filled cards, radius at most 2px. Colour transitions only; nothing loops. The page follows the system theme.
 - Code highlighting reads the tokens too: comments and docstrings in pencil, keywords at 600, the rest ink.
 

@@ -162,7 +162,9 @@ and per-file failures inside a run are not fatal: they travel as the same stable
 
 The frontend keys its copy by `code` (`utility/ErrorCopy.ts`) and never shows the
 backend's `message` or GitHub's text; a code it does not know still gets a
-sensible generic line. The same map covers the LLM codes (#7): a missing or
+sensible generic line and, like every other, a family that decides how the
+failure is printed on the page (`correctable`, `transient`, `setup`). The same
+map covers the LLM codes (#7): a missing or
 rejected model key (`llm_not_configured`, `llm_auth`) reads as a setup problem,
 while a spent quota or a provider that is down (`llm_quota_exhausted`,
 `llm_unavailable`) reads as wait-and-retry. When the model fails but the run
