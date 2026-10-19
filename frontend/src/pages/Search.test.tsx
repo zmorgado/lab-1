@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, render, screen, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent, { type UserEvent } from '@testing-library/user-event'
 import { http, HttpResponse, type JsonBodyType } from 'msw'
 import { setupServer } from 'msw/node'
@@ -294,9 +294,16 @@ const at = (repo: string, path: string, linked = true): Location => ({
   html_url: linked ? `https://github.com/${repo}/blob/abc123/${path}` : null,
 })
 
-function result(score: number, name: string, lines: [number, number], locations: Location[], parent: string | null = null) {
+function result(
+  rank: number,
+  score: number,
+  name: string,
+  lines: [number, number],
+  locations: Location[],
+  parent: string | null = null,
+) {
   return {
-    rank: 0,
+    rank,
     score,
     sha: `sha-${name}-${lines[0]}`,
     locations,
@@ -313,11 +320,11 @@ function result(score: number, name: string, lines: [number, number], locations:
 // Desordenados a proposito: el orden lo decide la pagina, no el que llegue
 const RESULTS = {
   results: [
-    result(0.8, 'top', [1, 2], [at('b-org/fast', 'src/zz.py', false)]),
-    result(0.85, 'pick', [3, 4], [at('c-org/tie', 'x.py')]),
-    result(0.85, 'sort_items', [3, 4], [at('a-org/slow', 'lib/sort.py')]),
-    result(0.88, 'rank', [20, 25], [at('b-org/fast', 'src/rank.py')], 'Ranker'),
-    result(0.91, 'rank', [10, 11], [at('b-org/fast', 'src/rank.py'), at('d-org/fork', 'src/rank.py'), at('e-org/copy', 'rank.py')]),
+    result(5, 0.8, 'top', [1, 2], [at('b-org/fast', 'src/zz.py', false)]),
+    result(4, 0.85, 'pick', [3, 4], [at('c-org/tie', 'x.py')]),
+    result(3, 0.85, 'sort_items', [3, 4], [at('a-org/slow', 'lib/sort.py')]),
+    result(2, 0.88, 'rank', [20, 25], [at('b-org/fast', 'src/rank.py')], 'Ranker'),
+    result(1, 0.91, 'rank', [10, 11], [at('b-org/fast', 'src/rank.py'), at('d-org/fork', 'src/rank.py'), at('e-org/copy', 'rank.py')]),
   ],
 }
 
@@ -332,10 +339,15 @@ async function searchWithTags(user: UserEvent) {
   await user.click(await screen.findByRole('button', { name: /search with these tags/i }))
 }
 
+// Despues de los resultados la pagina pide las explicaciones (#43)
+const noExplanations = () =>
+  http.post(`${API}/api/search/explain`, () => HttpResponse.json({ explanations: [] }))
+
 function stubSearch(body: JsonBodyType) {
   server.use(
     previewRoute(PREVIEW),
     http.post(`${API}/api/search`, () => HttpResponse.json(body)),
+    noExplanations(),
   )
 }
 
@@ -348,6 +360,7 @@ describe('reading the results', () => {
         sent = await request.json()
         return HttpResponse.json(RESULTS)
       }),
+      noExplanations(),
     )
     const user = userEvent.setup()
     render(<Search />)
@@ -443,6 +456,7 @@ describe('the end of a search', () => {
     server.use(
       previewRoute(PREVIEW),
       http.post(`${API}/api/search`, search.respond),
+      noExplanations(),
     )
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
     render(<Search />)
@@ -684,5 +698,127 @@ describe('the pool', () => {
     await proposeTags(user)
 
     expect(await screen.findByText(/didn't parse/i)).toBeTruthy()
+  })
+})
+
+// --- explicaciones (#43) -----------------------------------------------------
+
+const RANKER_NOTE = {
+  rank: 2,
+  value: 'Scores each item once with `self.score`, then sorts the pairs.',
+  suggestion: 'Sort with `key=self.score` instead of building pairs.',
+  highlights: [
+    { start: 22, end: 22 },
+    { start: 24, end: 25 },
+  ],
+}
+
+function stubExplained(explain: Parameters<typeof http.post>[1]) {
+  server.use(
+    previewRoute(PREVIEW),
+    http.post(`${API}/api/search`, () => HttpResponse.json(RESULTS)),
+    http.post(`${API}/api/search/explain`, explain),
+  )
+}
+
+describe('explaining the results', () => {
+  it('shows the results first, then what each match offers, a suggestion and the lines that matter', async () => {
+    let sent: { source: string; results: unknown[] } | undefined
+    const explain = held({ explanations: [RANKER_NOTE, { rank: 1, value: 'Same sort, no scoring.', suggestion: '', highlights: [] }] })
+    stubExplained(async ({ request }) => {
+      sent = (await request.json()) as typeof sent
+      return explain.respond()
+    })
+    const user = userEvent.setup()
+    render(<Search />)
+    await searchWithTags(user)
+
+    // Los resultados no esperan al modelo
+    const method = await screen.findByRole('article', { name: 'Ranker.rank' })
+    expect((await screen.findByRole('status')).textContent).toMatch(/reading each match/i)
+    expect(within(method).queryByText('Value')).toBeNull()
+
+    explain.release()
+
+    expect(await within(method).findByText('Value')).toBeTruthy()
+    expect(within(method).getByText(/scores each item once/i).textContent).toBe(RANKER_NOTE.value.replaceAll('`', ''))
+    // Los nombres de codigo van en mono
+    expect(within(method).getByText('self.score').tagName).toBe('CODE')
+    expect(within(method).getByText('For your snippet')).toBeTruthy()
+    // El subrayado tambien se dice, no solo se ve
+    expect(within(method).getByLabelText(/underlined line 22, lines 24–25$/)).toBeTruthy()
+
+    // Sin sugerencia no hay etiqueta; lo que el modelo no explico queda como estaba
+    const rank = screen.getByRole('article', { name: 'rank' })
+    expect(within(rank).getByText('Same sort, no scoring.')).toBeTruthy()
+    expect(within(rank).queryByText('For your snippet')).toBeNull()
+    expect(within(screen.getByRole('article', { name: 'top' })).queryByText('Value')).toBeNull()
+
+    // El snippet viaja sin trim, y cada resultado con su puesto, donde se ve y su primera linea
+    expect(sent?.source).toBe(METHOD)
+    expect(sent?.results).toHaveLength(5)
+    expect(sent?.results).toContainEqual({
+      rank: 2,
+      repo: 'b-org/fast',
+      path: 'src/rank.py',
+      name: 'Ranker.rank',
+      start_line: 20,
+      code: RANKER_RANK,
+    })
+  })
+
+  it.each([
+    ['llm_quota_exhausted', 429, /used up its quota/],
+    ['llm_unavailable', 503, /isn't available/],
+    ['llm_malformed_response', 502, /couldn't explain these matches this time/],
+  ])('says plainly when the model fails with %s, and keeps the results', async (code, status, copy) => {
+    stubExplained(() => HttpResponse.json({ code, message: 'Gemini answered something' }, { status }))
+    const user = userEvent.setup()
+    render(<Search />)
+    await searchWithTags(user)
+
+    expect(await within(resultsRegion()).findByText(copy)).toBeTruthy()
+    expect(screen.queryByText(/gemini answered/i)).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getAllByRole('article')).toHaveLength(5)
+  })
+
+  it("doesn't call the model when nothing was found", async () => {
+    let calls = 0
+    server.use(
+      previewRoute(PREVIEW),
+      http.post(`${API}/api/search`, () => HttpResponse.json({ results: [] })),
+      http.post(`${API}/api/search/explain`, () => {
+        calls++
+        return HttpResponse.json({ explanations: [] })
+      }),
+    )
+    const user = userEvent.setup()
+    render(<Search />)
+    await searchWithTags(user)
+
+    expect(await within(resultsRegion()).findByText(/nothing on github/i)).toBeTruthy()
+    expect(calls).toBe(0)
+  })
+
+  it('drops a late explanation once a new search has started', async () => {
+    const late = held({ explanations: [RANKER_NOTE] })
+    let calls = 0
+    stubExplained(() => (++calls === 1 ? late.respond() : HttpResponse.json({ explanations: [] })))
+    const user = userEvent.setup()
+    render(<Search />)
+    await searchWithTags(user)
+    await screen.findByRole('article', { name: 'Ranker.rank' })
+
+    await user.click(screen.getByRole('button', { name: /new search/i }))
+    await user.click(screen.getByRole('button', { name: /propose tags/i }))
+    await user.click(await screen.findByRole('button', { name: /search with these tags/i }))
+    const method = await screen.findByRole('article', { name: 'Ranker.rank' })
+    await waitFor(() => expect(calls).toBe(2))
+
+    late.release()
+    await act(() => new Promise(resolve => setTimeout(resolve, 50)))
+
+    expect(within(method).queryByText('Value')).toBeNull()
   })
 })

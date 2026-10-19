@@ -1,5 +1,7 @@
 import axios from 'axios'
 import { API_URL, LANGUAGE } from '@/constants/api'
+import type { ExplainItemBody } from '@/jsons/ExplainRequest'
+import type { ExplainResponse } from '@/jsons/ExplainResponse'
 import type { PreviewResponse } from '@/jsons/PreviewResponse'
 import type { ConfirmedTagBody } from '@/jsons/SearchRequest'
 import type { SearchResponse } from '@/jsons/SearchResponse'
@@ -26,6 +28,13 @@ class SearchService {
   async search(source: string, tags: ConfirmedTagBody[]) {
     return await getAxiosData(() =>
       backend.post<SearchResponse>('/api/search', { source, language: LANGUAGE, tags }),
+    )
+  }
+
+  // Que aporta cada resultado (#43). Va despues de la busqueda
+  async explain(source: string, results: ExplainItemBody[]) {
+    return await getAxiosData(() =>
+      backend.post<ExplainResponse>('/api/search/explain', { source, results }),
     )
   }
 }

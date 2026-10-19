@@ -8,7 +8,8 @@ son la unica senal de cuanto queda del presupuesto compartido.
 /api/search es el endpoint general: recibe el snippet y le pasa el trabajo al
 pipeline (pipeline.py), que encadena las etapas. Las etapas no son endpoints.
 /api/search/preview es el paso anterior del usuario: los tags que va a usar la
-busqueda, para confirmarlos (#38).
+busqueda, para confirmarlos (#38). /api/search/explain va despues: que aporta
+cada resultado (#43).
 
 Tambien expone el servicio de tags por LLM (#7), que no tiene nada que ver con
 GitHub: recibe un snippet y devuelve las cinco categorias de tags.
@@ -29,7 +30,17 @@ from .config import Settings, load_settings
 from .github import ERROR_QUERY_INVALID, GitHubClient, GitHubError, RateLimit
 from .llm_tags import GeminiTagService, LlmTagError
 from .pipeline import Ranker, SearchError, preview, search, unixcoder_rank
-from .search_api import PreviewRequest, PreviewResponse, SearchRequest, SearchResponse
+from .result_explanations import explain
+from .search_api import (
+    ExplainRequest,
+    ExplainResponse,
+    ExplanationOut,
+    HighlightOut,
+    PreviewRequest,
+    PreviewResponse,
+    SearchRequest,
+    SearchResponse,
+)
 from .tags_api import TagsDep, TagsRequest, TagsResponse, handle_llm_tag_error
 
 # 'owner/name', el formato que devuelve search/code en repository.full_name
@@ -158,6 +169,23 @@ def create_app(settings: Settings | None = None, rank: Ranker = unixcoder_rank) 
             payload.source, payload.language, llm=tags, tags=payload.selected_tags()
         )
         return PreviewResponse.model_validate(plan.as_preview())
+
+    @app.post("/api/search/explain")
+    async def explain_results(tags: TagsDep, payload: ExplainRequest) -> ExplainResponse:
+        # No es un paso del usuario, pero va aparte de /api/search: asi los
+        # resultados no esperan al modelo y una falla del modelo no tira la busqueda
+        notes = await explain(tags, payload.source, payload.items())
+        return ExplainResponse(
+            explanations=[
+                ExplanationOut(
+                    rank=rank,
+                    value=note.value,
+                    suggestion=note.suggestion,
+                    highlights=[HighlightOut(start=s, end=e) for s, e in note.highlights],
+                )
+                for rank, note in sorted(notes.items())
+            ]
+        )
 
     @app.post("/api/tags")
     async def extract_tags(tags: TagsDep, payload: TagsRequest) -> TagsResponse:

@@ -261,6 +261,16 @@ class GeminiTagService:
         data = await self._post(payload)
         return self._to_tag_set(data, tiers=tiers, fallback_language=language)
 
+    async def generate(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Un llamado con payload propio al mismo modelo, con los mismos errores
+        que `extract`. Lo usan las explicaciones de resultados (#43)."""
+        if not self._settings.gemini_api_key:
+            raise LlmTagError(
+                "The LLM is not configured: GEMINI_API_KEY is empty.",
+                code=ERROR_LLM_UNAVAILABLE,
+            )
+        return await self._post(payload)
+
     # --- interno ---------------------------------------------------------
 
     def _build_payload(

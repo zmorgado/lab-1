@@ -347,3 +347,35 @@ async def test_a_malformed_retry_after_is_ignored_not_fatal() -> None:
 
     assert exc.value.retry_after is None
 
+
+
+# --- generate (#43) ------------------------------------------------------
+
+
+async def test_generate_sends_the_payload_as_given_and_returns_the_models_json() -> None:
+    seen: list[httpx.Request] = []
+    payload = {"contents": [{"role": "user", "parts": [{"text": "hello"}]}]}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=_gemini_response({"explanations": []}))
+
+    data = await _service(handler).generate(payload)
+
+    assert data == {"explanations": []}
+    assert json.loads(seen[0].content) == payload
+    assert seen[0].headers["x-goog-api-key"] == "test-key"
+    assert seen[0].url.path.endswith("/models/gemini-3.8-flash:generateContent")
+
+
+async def test_generate_without_a_key_answers_llm_unavailable() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError("no key: the LLM must not be called")
+
+    keyless = replace(SETTINGS, gemini_api_key=None)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    with pytest.raises(LlmTagError) as exc:
+        await GeminiTagService(keyless, client=client).generate({})
+
+    assert exc.value.code == ERROR_LLM_UNAVAILABLE

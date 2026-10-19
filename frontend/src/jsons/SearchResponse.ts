@@ -1,6 +1,7 @@
 // POST /api/search, solo los campos que se leen (ver /openapi.json)
 export type SearchResponse = {
   results: {
+    rank: number
     score: number
     // Todos los repos publicos con el mismo contenido (sha)
     locations: { repo: string; path: string; html_url: string | null }[]
