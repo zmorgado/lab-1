@@ -9,13 +9,15 @@ see the stack decision on #3 for why it is Python rather than Node/TS:
 - the AST stage: parse, isolate subtrees, prune (#20)
 - the embedding stage: UniXcoder + cosine ranking (#21, after the #18 spike)
 - the result mapper the frontend renders (#8) and error codes (#9)
+- the model's explanation of each result (#43)
 
 #3 landed the first two endpoints and the app skeleton (FastAPI + uvicorn). #21
 landed the embedding stage as a library. #7 added the LLM tags, and #4 the grep
 tags with the general search endpoint. #20 added the AST stage and wired every
 stage into one run behind `/api/search`, and #8 turned its output into the ranked
 result list. #38 put the frontend on it, with a tag preview the user confirms
-before the search runs. Filters (#19) and error codes (#9) are still to come.
+before the search runs, and #43 has the model explain each result once the
+search is done. Filters (#19) and error codes (#9) are still to come.
 Issue #1 is the spec.
 
 ## Layout
@@ -98,6 +100,7 @@ Enterprise, or a fake in tests).
 | `GET /api/contents?repo=&path=&ref=` | the file's source as `text/plain` |
 | `POST /api/search/preview` | the queries a search would run, each tag with its source; spends no GitHub budget (#38) |
 | `POST /api/search` | the full run: tags, queries, the ranked results (#8) and GitHub's raw bodies (see below) |
+| `POST /api/search/explain` | per result: what it offers next to the snippet, a suggestion and the lines that matter; one LLM call, no GitHub budget (#43) |
 
 The proxy endpoints are a thin pass-through: they attach the credential and
 forward. They do not build queries or reshape results (#8), and GitHub's error
@@ -168,8 +171,10 @@ Endpoints follow the user's steps, not the internal stages. The stages are plain
 modules that don't know each other, and `pipeline.py` chains them, so the route
 stays thin. Every later stage plugs into `pipeline.search()`, not into a new
 endpoint: filters (#19), and the user's edits to the tag list (#22), which reach
-it as the confirmed `tags`. The one route beside it, the tag preview, exists
-because it is a step of its own for the user (#38).
+it as the confirmed `tags`. The tag preview exists beside it because it is a
+step of its own for the user (#38). The result explanations (#43) are the one
+exception: not a step, but run apart, after the search, so the results never
+wait for the model and a model failure never fails the search.
 
 | Module | Stage |
 | --- | --- |
@@ -434,6 +439,42 @@ starts and `/api/tags` answers `llm_unavailable`.
 Everything but `empty_source` also carries `"fallback": "grep"`, so the client can
 carry on with grep tags alone. Nothing is retried: on failure the client falls
 back to grep, and a 429 forwards `Retry-After`.
+
+## Result explanations (#43)
+
+After a search, `POST /api/search/explain` asks the same model about every
+result in one call. For each one it returns what the code offers next to the
+snippet, one thing worth bringing into the snippet (empty when there is
+nothing), and up to three ranges of its most interesting lines, which the page
+underlines. It is stateless: the page sends back the snippet and the results it
+already has, so nothing is kept between the two calls.
+
+```
+POST /api/search/explain
+  {"source": "...",
+   "results": [{"rank": 1, "repo": "o/r", "path": "a.py", "name": "top_keys",
+                "start_line": 40, "code": "def top_keys(d, n=None): ..."}]}
+→ {"explanations": [{"rank": 1,
+                     "value": "Sorts keys by score like your snippet, and cuts to the top `n`.",
+                     "suggestion": "Accept an optional `n` instead of returning every key.",
+                     "highlights": [{"start": 42, "end": 42}]}]}
+```
+
+`rank` is the one `/api/search` gave each result, and keys the answer. A result
+the model skipped is missing, never filled in. The prompt numbers each result's
+lines with its file's line numbers so the model can point at them, and the
+cleaning clips every range to the lines it saw. Each result's code is cut at
+`MAX_CANDIDATE_CHARS`, on whole lines.
+
+It lives in `result_explanations.py` (prompt, schema, cleaning), the models in
+`search_api.py`, and the route in `app.py`. The call goes through the tag
+service's `generate()`, so the configuration, the errors and their codes are
+the LLM tag service's (above), quota included: each search now spends two model
+calls, the tags and this one. A failure here leaves the results untouched.
+
+Measured on `gemini-3.5-flash-lite` with a 15-line snippet and 10 results of
+5–59 lines (#43): about 3 s (median of 4 runs), 5.1k tokens in and 0.8k out.
+50 results took 8.6 s.
 
 ## Tests
 
