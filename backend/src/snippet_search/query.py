@@ -36,7 +36,8 @@ def build_query(tags: Iterable[str], language: str) -> SearchQuery | NothingToSe
     """Llena la query en el orden dado hasta MAX_TAGS o hasta el limite de largo.
 
     Un tag que no entra se saltea y se sigue con el proximo: los niveles altos
-    van primero, asi que quedan siempre que quepan.
+    van primero, asi que quedan siempre que quepan. Uno vacio tambien se
+    saltea. `tags` los devuelve como llegaron, aunque el termino se limpie.
     """
     qualifier = f"language:{language}"
     selected: list[str] = []
@@ -47,7 +48,7 @@ def build_query(tags: Iterable[str], language: str) -> SearchQuery | NothingToSe
         if len(selected) == MAX_TAGS:
             break
         term = _as_term(tag)
-        if length + 1 + len(term) > MAX_QUERY_LENGTH:
+        if term is None or length + 1 + len(term) > MAX_QUERY_LENGTH:
             continue
         selected.append(tag)
         terms.append(term)
@@ -58,8 +59,12 @@ def build_query(tags: Iterable[str], language: str) -> SearchQuery | NothingToSe
     return SearchQuery(tags=tuple(selected), q=" ".join([*terms, qualifier]))
 
 
-def _as_term(tag: str) -> str:
+def _as_term(tag: str) -> str | None:
+    # Una comilla adentro cerraria la frase antes de tiempo (#35); vacio no busca nada
+    text = tag.replace('"', "").strip()
+    if not text:
+        return None
     # Las comillas fuerzan frase exacta: sin ellas 'binary search' son dos terminos sueltos
-    if SINGLE_TOKEN_PATTERN.fullmatch(tag) and tag not in OPERATORS:
-        return tag
-    return f'"{tag}"'
+    if SINGLE_TOKEN_PATTERN.fullmatch(text) and text not in OPERATORS:
+        return text
+    return f'"{text}"'

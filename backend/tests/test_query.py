@@ -1,5 +1,7 @@
 from collections.abc import Iterable
 
+import pytest
+
 from snippet_search.query import NothingToSearch, SearchQuery, build_query
 
 # Candidatos ya ordenados por nivel, como los devuelve grep_tags
@@ -58,3 +60,33 @@ def test_a_multi_token_tag_is_quoted_to_match_as_a_unit() -> None:
 def test_an_empty_tag_list_is_not_searched() -> None:
     # AC: un resultado explicito, no una query vacia
     assert build_query([], "python") == NothingToSearch()
+
+
+# --- tags que romperian la query (#35) ----------------------------------------
+
+
+def test_empty_and_blank_tags_never_reach_the_query() -> None:
+    # Un tag vacio daria '""', que GitHub busca tal cual
+    assert query_of(["", "  ", "ok_tag"]).q == "ok_tag language:python"
+
+
+def test_only_blank_tags_are_nothing_to_search() -> None:
+    assert build_query(["", "   ", '""'], "python") == NothingToSearch()
+
+
+@pytest.mark.parametrize(
+    ("tag", "term"),
+    [
+        ('say "hi"', '"say hi"'),
+        ('a"b', "ab"),
+        ('"quoted"', "quoted"),
+        ("  padded  ", "padded"),
+    ],
+)
+def test_a_double_quote_inside_a_tag_never_unbalances_the_phrase(tag: str, term: str) -> None:
+    assert query_of([tag]).q == f"{term} language:python"
+
+
+def test_the_query_keeps_each_tag_as_it_was_given() -> None:
+    # El preview compara lo seleccionado con lo que entro: el texto tiene que ser el mismo
+    assert query_of(['say "hi"', "ok_tag"]).tags == ('say "hi"', "ok_tag")
