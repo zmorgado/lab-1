@@ -1,23 +1,6 @@
-import { Highlight, type PrismTheme } from 'prism-react-renderer'
+import { Highlight } from 'prism-react-renderer'
 import type { LineRange } from '@/types/Explanations'
-
-// Las tintas de sintaxis del Om Theme (A Darker Dracula Theme), leidas de los
-// tokens: el codigo va sobre el papel de la pagina, asi que el fondo queda
-// transparente y solo cambian las tintas. Comentarios y docstrings en comment,
-// keywords y operadores en pink, strings en yellow, funciones en green, clases
-// y builtins en cyan, constantes en purple y parametros en orange
-const THEME: PrismTheme = {
-  plain: { color: 'var(--ink)', backgroundColor: 'transparent' },
-  styles: [
-    { types: ['comment', 'triple-quoted-string'], style: { color: 'var(--code-comment)' } },
-    { types: ['keyword', 'operator'], style: { color: 'var(--code-keyword)' } },
-    { types: ['string', 'char'], style: { color: 'var(--code-string)' } },
-    { types: ['function', 'decorator'], style: { color: 'var(--code-function)' } },
-    { types: ['class-name', 'builtin'], style: { color: 'var(--code-class)' } },
-    { types: ['number', 'constant', 'boolean'], style: { color: 'var(--code-constant)' } },
-    { types: ['parameter'], style: { color: 'var(--code-parameter)' } },
-  ],
-}
+import { CODE_THEME } from '@/utility/CodeTheme'
 
 // `highlights`: lineas del archivo que van subrayadas en --signal
 type CodeBlockProps = { code: string; startLine: number; label: string; highlights?: LineRange[] }
@@ -29,7 +12,7 @@ export default function CodeBlock({ code, startLine, label, highlights = [] }: C
   const marked = (line: number) => highlights.some(({ start, end }) => start <= line && line <= end)
 
   return (
-    <Highlight theme={THEME} code={code.replace(/\n$/, '')} language="python">
+    <Highlight theme={CODE_THEME} code={code.replace(/\n$/, '')} language="python">
       {({ style, tokens, getLineProps, getTokenProps }) => (
         // Se scrollea adentro de su bloque, asi que tiene que poder enfocarse
         <pre

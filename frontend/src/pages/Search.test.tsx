@@ -55,6 +55,25 @@ describe('attaching a snippet', () => {
     await user.type(snippetBox(), '   ')
     expect(submit).toHaveProperty('disabled', true)
   })
+
+  it('colors the pasted snippet with the Om Theme behind the textarea', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<Search />)
+
+    await user.click(snippetBox())
+    await user.paste(METHOD)
+
+    // El textarea sigue siendo el dueño del texto
+    expect(snippetBox().value).toBe(METHOD)
+    // Y detras, la misma tipografia pero tokenizada con las tintas del tema
+    const layer = container.querySelector('pre[aria-hidden="true"]')
+    const keyword = layer?.querySelector('.token.keyword')
+    expect(keyword?.textContent).toBe('def')
+    expect(keyword?.getAttribute('style')).toContain('--code-keyword')
+    const fn = layer?.querySelector('.token.function')
+    expect(fn?.textContent).toBe('rank')
+    expect(fn?.getAttribute('style')).toContain('--code-function')
+  })
 })
 
 // --- confirmar los tags ------------------------------------------------------
