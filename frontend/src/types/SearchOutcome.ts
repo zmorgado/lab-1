@@ -1,4 +1,6 @@
 export type SubtreeMatch = {
+  // El puesto que le dio el backend: identifica al resultado
+  rank: number
   // `Clase.metodo` o `funcion`
   name: string
   startLine: number

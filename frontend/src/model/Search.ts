@@ -1,7 +1,10 @@
 import { AST_KIND, MODEL_KINDS } from '@/constants/tags'
+import type { ExplainItemBody } from '@/jsons/ExplainRequest'
+import type { ExplainResponse } from '@/jsons/ExplainResponse'
 import type { PreviewResponse } from '@/jsons/PreviewResponse'
 import type { ConfirmedTagBody } from '@/jsons/SearchRequest'
 import type { SearchResponse } from '@/jsons/SearchResponse'
+import type { Explanation } from '@/types/Explanations'
 import type { RepositoryMatches, SearchOutcome, SubtreeMatch } from '@/types/SearchOutcome'
 import type { TagPreview } from '@/types/TagPreview'
 
@@ -56,6 +59,7 @@ export function toSearchOutcome(raw: SearchResponse): SearchOutcome {
     const subtrees = files.get(home.path) ?? []
     files.set(home.path, subtrees)
     subtrees.push({
+      rank: result.rank,
       name: result.parent ? `${result.parent}.${result.name}` : result.name,
       startLine: result.start_line,
       endLine: result.end_line,
@@ -81,6 +85,23 @@ export function toSearchOutcome(raw: SearchResponse): SearchOutcome {
     repositories: repositories.sort((a, b) => b.bestCosine - a.bestCosine || byText(a.repo, b.repo)),
   }
 }
+
+// Los resultados como los explica el backend (#43), bajo el repo y el path
+// donde los ve el usuario
+export const toExplainItems = (outcome: SearchOutcome): ExplainItemBody[] =>
+  outcome.repositories.flatMap(({ repo, files }) =>
+    files.flatMap(({ path, subtrees }) =>
+      subtrees.map(({ rank, name, startLine, code }) => ({ rank, repo, path, name, start_line: startLine, code })),
+    ),
+  )
+
+export const toExplanations = (raw: ExplainResponse): Map<number, Explanation> =>
+  new Map(
+    raw.explanations.map(({ rank, value, suggestion, highlights }) => [
+      rank,
+      { value, suggestion: suggestion.trim() || null, highlights },
+    ]),
+  )
 
 // A igualdad de coseno, por nombre: el orden no depende del que llego primero
 const byText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)

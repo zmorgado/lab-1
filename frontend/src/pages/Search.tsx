@@ -5,8 +5,17 @@ import Failure from '@/components/Failure'
 import Results from '@/components/Results'
 import SnippetForm from '@/components/SnippetForm'
 import TagConfirmation from '@/components/TagConfirmation'
-import { toConfirmedTags, toSearchOutcome, toTagPreview, withDropped } from '@/model/Search'
+import {
+  toConfirmedTags,
+  toExplainItems,
+  toExplanations,
+  toSearchOutcome,
+  toTagPreview,
+  withDropped,
+} from '@/model/Search'
 import { searchService } from '@/services/SearchService'
+import type { Explanations } from '@/types/Explanations'
+import type { SearchOutcome } from '@/types/SearchOutcome'
 import type { Step } from '@/types/Step'
 import type { TagPreview } from '@/types/TagPreview'
 import { addTag, toggleTag } from '@/utility/TagEdits'
@@ -48,9 +57,27 @@ export default function Search() {
     setState({ step: 'searching', preview })
     try {
       const outcome = toSearchOutcome(await searchService.search(snippet, toConfirmedTags(preview)))
-      setState({ step: 'done', preview, outcome })
+      setState({ step: 'done', preview, outcome, explanations: { status: 'idle' } })
+      void explainResults(outcome)
     } catch (error) {
       setState({ step: 'failed', at: 'search', error, preview })
+    }
+  }
+
+  // Las explicaciones van despues de los resultados, que ya se ven (#43)
+  async function explainResults(outcome: SearchOutcome) {
+    const items = toExplainItems(outcome)
+    if (items.length === 0) return
+    // Solo cuenta si la pagina sigue mostrando estos resultados
+    const update = (explanations: Explanations) =>
+      setState(current =>
+        current.step === 'done' && current.outcome === outcome ? { ...current, explanations } : current,
+      )
+    update({ status: 'loading' })
+    try {
+      update({ status: 'ready', byRank: toExplanations(await searchService.explain(snippet, items)) })
+    } catch (error) {
+      update({ status: 'failed', error })
     }
   }
 
@@ -127,6 +154,7 @@ export default function Search() {
       {state.step === 'done' && (
         <Results
           outcome={state.outcome}
+          explanations={state.explanations}
           actions={
             <Button primary onClick={editSnippet}>
               New search <span aria-hidden="true">▸</span>
