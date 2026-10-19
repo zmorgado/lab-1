@@ -23,3 +23,16 @@ export function errorCopy(error: unknown): string {
   const status = error instanceof ApiError ? ` (HTTP ${error.status})` : ''
   return `Something went wrong on the way${status}. The GitHub budget is shared by everyone, so waiting a minute often helps.`
 }
+
+// Las explicaciones de los resultados (#43): fallo el modelo, no la busqueda
+const EXPLANATION_COPY = new Map<string, string>([
+  ['llm_quota_exhausted', 'The model has used up its quota for now, so these matches go unexplained.'],
+  ['llm_unavailable', "The model isn't available, so these matches go unexplained."],
+])
+
+export function explanationCopy(error: unknown): string {
+  const code = error instanceof ApiError ? error.code : null
+  const reason =
+    (code !== null && EXPLANATION_COPY.get(code)) || "The model couldn't explain these matches this time."
+  return `${reason} The ranking doesn't depend on it.`
+}

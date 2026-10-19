@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `main` carries everything: the design sources plus the code, since `feature/initial-frontend` was merged in PR #16. Two codebases sit side by side, with separate toolchains:
 
 - **`frontend/`** — the React + TypeScript + Vite frontend (`src/`, `package.json`, pnpm).
-- **`backend/`** — the Python service (`pyproject.toml`, uv). It will hold the whole pipeline: proxy, tag extraction, AST stage and embeddings. So far, in `src/snippet_search/`: the proxy from #3, the LLM tags from #7, the grep tags, query building and pipeline from #4, the tag pool the user edits from #22 in `tag_selection.py`, the UniXcoder embedding stage from #21 in `embeddings/`, the AST stage from #20 in `ast_subtrees.py`, which also wired every stage into one run behind `POST /api/search`, and the ranked result list from #8 in `results.py`.
+- **`backend/`** — the Python service (`pyproject.toml`, uv). It will hold the whole pipeline: proxy, tag extraction, AST stage and embeddings. So far, in `src/snippet_search/`: the proxy from #3, the LLM tags from #7, the grep tags, query building and pipeline from #4, the tag pool the user edits from #22 in `tag_selection.py`, the UniXcoder embedding stage from #21 in `embeddings/`, the AST stage from #20 in `ast_subtrees.py`, which also wired every stage into one run behind `POST /api/search`, the ranked result list from #8 in `results.py`, and the model's explanation of each result from #43 in `result_explanations.py`.
 - **`docs/research/`** — the design sources: ~~`solution-schematics-v2.md`~~, `multiple-snippet-sorting-solution.md`, `unixcoder-verificacion.md`, the reference PDFs, `discussion.txt`, `tests.md` and the `generacion-de-tags-query.py` sketch. Committed sources, not generated output — cite them rather than re-deriving.
 - **`docs/diagrams/`** — the architecture diagram (`lab-1.architecture.html`, generated from `lab-1.architecture.json`).
 - **`docs/agents/`** — how agent skills should use this repo's tracker, labels and domain docs.
@@ -78,9 +78,9 @@ A GitHub-backed search engine: paste a snippet, get back ranked code on GitHub t
 4. **AST** (#20) — the same GREP service parses the candidates, isolates subtrees by construct category, tag anchors and completeness, and prunes by length. It also produces the AST of the pasted snippet.
 5. **Embeddings** (#18, #21) — UniXcoder embeds the snippet and the surviving candidates; cosine similarity ranks them. This is where "different text, same function" gets caught.
 
-Then results (#8, #38): one ranked, deduplicated list with repo, path, the matching snippet, scores and the query that found it.
+Then results (#8, #38): one ranked, deduplicated list with repo, path, the matching snippet, scores and the query that found it. Once they're on screen, the LLM explains each one (#43): what it offers next to the snippet, a suggestion for the snippet, and the lines to underline.
 
-**Endpoints follow the user's steps, not the stages.** Each stage is a plain backend module, and `pipeline.py` chains them behind `POST /api/search`. A new stage plugs into `pipeline.search()`; a new endpoint is only for a new user step, like the tag preview (`POST /api/search/preview`, #38) the user confirms before searching. The confirmed tags go back in `/api/search`'s `tags` field, and the LLM isn't called twice.
+**Endpoints follow the user's steps, not the stages.** Each stage is a plain backend module, and `pipeline.py` chains them behind `POST /api/search`. A new stage plugs into `pipeline.search()`; a new endpoint is only for a new user step, like the tag preview (`POST /api/search/preview`, #38) the user confirms before searching. The confirmed tags go back in `/api/search`'s `tags` field, and the LLM isn't called twice. The one exception is `POST /api/search/explain` (#43): it isn't a step, but it runs apart so the results never wait for the model and a model failure never fails the search. It spends the same Gemini quota as the tags.
 
 The diagram is `docs/diagrams/lab-1.architecture.html`, generated from the JSON beside it with the `archify` skill.
 
@@ -98,14 +98,14 @@ Everything in this section lives under `frontend/`, and the paths below are rela
 
 React 19, Vite 8, Tailwind v4 (via `@tailwindcss/vite`, not a PostCSS config), axios, and `prism-react-renderer` for highlighting. One page, no router. `@/` is aliased to `src/` in both `vite.config.ts` and the tsconfigs — use it rather than deep relative paths.
 
-The page talks only to our backend, at `VITE_API_URL` (default `http://127.0.0.1:8000`, `src/constants/api.ts`), and knows nothing about GitHub's API. #38 built it and #22 added tag editing; filters (#19) and the error taxonomy (#9) are still to come.
+The page talks only to our backend, at `VITE_API_URL` (default `http://127.0.0.1:8000`, `src/constants/api.ts`), and knows nothing about GitHub's API. #38 built it, #22 added tag editing and #43 the result explanations; filters (#19) and the error taxonomy (#9) are still to come.
 
 The directory names encode a layering that is worth respecting:
 
 - `jsons/` — raw backend shapes, mirroring `/openapi.json` with only the fields read. `types/` — domain shapes the UI consumes.
 - `model/` — no classes; `model/Search.ts` is the raw→domain mapping, and the boundary between `jsons/` and `types/` is crossed **here and only here**. Grouping results by repository happens here too.
 - `services/` — axios calls. `common.ts::getAxiosData` is the single error funnel: every failed call becomes an `ApiError` carrying the backend's stable `code` (if any) and the status, or `null` for no response. Callers never touch `AxiosError`.
-- `utility/` — pure helpers. `TagEdits.ts` toggles and adds tags on the domain shape. `ErrorCopy.ts` keys the user-facing copy by `code`; an unreachable backend has its own line, anything else a generic one, and neither the backend's `message` nor GitHub's text is ever shown.
+- `utility/` — pure helpers. `TagEdits.ts` toggles and adds tags on the domain shape. `ErrorCopy.ts` keys the user-facing copy by `code`; an unreachable backend has its own line, anything else a generic one, and neither the backend's `message` nor GitHub's text is ever shown. The model's failures on the results step have their own copy there, since the search itself didn't fail.
 - `components/`, `pages/` — presentation. `pages/Search.tsx` holds the step state and the two calls.
 
 There is no `README.md`: #2 renamed the stock Vite template readme to `FRONTEND.md` (now `frontend/FRONTEND.md`) and replaced it with real frontend docs.
@@ -116,7 +116,7 @@ There is no `README.md`: #2 renamed the stock Vite template readme to `FRONTEND.
 
 1. **Snippet.** Pasted, or a `.py` file read into the same box. It is sent **untrimmed**: trimming strips the first line's indentation and breaks a pasted method.
 2. **Tags.** `POST /api/search/preview` returns a pool of tags by kind, each marked AST or model and selected or not; the page notes when the model was unavailable and when the snippet didn't parse. The user toggles tags and adds their own, one input per group, so a tag's kind is its group (#22). After each edit the page sends the selection back to the preview, which rebuilds the queries without the model and says which tags won't fit; only the latest answer counts. Confirming sends exactly the selected tags in `/api/search`'s `tags` field, so the LLM isn't called twice.
-3. **Results.** Each result is a subtree that may live in several repos (same blob). `toSearchOutcome` places it once, under the first of its `locations`, and lists the rest as "also in". Repos order by their best cosine, files and subtrees within them by cosine, ties by name.
+3. **Results.** Each result is a subtree that may live in several repos (same blob). `toSearchOutcome` places it once, under the first of its `locations`, and lists the rest as "also in". Repos order by their best cosine, files and subtrees within them by cosine, ties by name. Then `/api/search/explain` fills in a note under each subtree, keyed by the `rank` the backend gave it; a late answer only lands if the page still shows the same outcome.
 
 Both waits count elapsed seconds and lock the controls. Nothing found is a plain sentence, never the error style.
 
@@ -125,7 +125,7 @@ Both waits count elapsed seconds and lock the controls. Nothing found is a plain
 The token layer at the top of `src/index.css` is the portfolio's (`zmorgado/portfolio`, `app/globals.css`), copied verbatim; its ADR 0005 owns the palette. Change it there, then copy the block down. Tailwind sees the tokens through `@theme`, with its own palette and font stacks reset to `initial`, so `text-pencil` exists and `text-slate-600` doesn't. No raw hex outside that file (the favicon carries literals, with a comment saying why).
 
 - Spectral for prose, IBM Plex Mono for data only: code, tags, paths, line ranges, scores, seconds.
-- `--signal` for links and the system acting, `--pencil` for secondary text, `--alert` at most once, on a failed step.
+- `--signal` for links and the system acting (including the lines the model underlines), `--pencil` for secondary text, `--alert` at most once, on a failed step.
 - No shadows, no filled cards, radius at most 2px. Colour transitions only; nothing loops. The page follows the system theme.
 - Code highlighting reads the tokens too: comments and docstrings in pencil, keywords at 600, the rest ink.
 
