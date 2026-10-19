@@ -48,8 +48,8 @@ export default function SnippetForm({ snippet, onChange, onSubmit, locked, showA
         autoCorrect="off"
         placeholder="Paste a Python function or class"
         className="block w-full resize-y rounded-xs border border-rule bg-transparent p-3 font-mono text-sm
-                   leading-relaxed text-ink transition-colors placeholder:text-pencil read-only:text-pencil
-                   focus:border-pencil focus:outline-none"
+                   leading-relaxed text-ink caret-signal transition-colors placeholder:text-pencil
+                   read-only:text-pencil focus:border-pencil focus:outline-none"
       />
       {showActions && (
         <div className="mt-4 flex flex-wrap items-center gap-2">
