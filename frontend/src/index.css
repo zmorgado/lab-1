@@ -3,38 +3,37 @@
 /* ============================================================
    DONDE VIVE LA PALETA
 
-   La base es el Om Theme (A Darker Dracula Theme, de Otavio
-   Miranda): una Dracula un poco mas oscura. El sitio la toma
-   entera y siempre, sin seguir el tema del sistema, asi que el
-   papel es #282a36 en cualquier maquina.
+   El bloque de tokens de abajo es copia textual de zmorgado/portfolio
+   app/globals.css, como en la Demo del detector de intrusiones: tintas
+   identicas se leen como un solo sistema, casi identicas como un error.
 
      ground   el papel
      ink      el texto y los trazos estructurales
      pencil   texto secundario y datos sin novedad
      signal   el sistema actuando: links
-     alert    la correccion: lo que no anduvo
-     rule     las lineas y los bordes
+     alert    la correccion: como mucho una vez por pagina, en lo
+              que no anduvo
 
-   El codigo Python lleva ademas las tintas de sintaxis del tema
-   (--code-*), las mismas del editor: comentarios y docstrings en
-   comment, keywords y operadores en pink, strings en yellow,
-   funciones en green, clases y builtins en cyan, constantes en
-   purple y parametros en orange.
-
-   Fuera de este archivo nada usa un color crudo ni una fuente.
+   La paleta es de zmorgado/portfolio docs/adr/0005-visual-direction-
+   derived-from-the-marks.md: se cambia alla y se copia el bloque sin
+   tocarlo. Fuera de este archivo nada usa un color crudo ni una fuente.
    ============================================================ */
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 
-  --ground: #282a36;
-  --ink: #f8f8f2;
-  --pencil: #6272a4;
-  --signal: #8be9fd;
-  --alert: #ff5555;
-  --rule: #44475a;
+  --ground: #fcfcfb;
+  --ink: #1c1b19;
+  --pencil: #6e6c68;
+  --signal: #0e6a86;
+  --alert: #b23a28;
+  --rule: #e2e0dc;
 
-  /* Sintaxis del Om Theme, solo para el codigo Python */
+  /* Las tintas de sintaxis del Om Theme, solo para el codigo Python. No
+     siguen al tema del sitio: son las del editor (keywords y operadores en
+     pink, strings en yellow, funciones en green, clases y builtins en cyan,
+     constantes en purple, parametros en orange y comentarios en comment).
+     Viven aca para que ningun componente use un color crudo */
   --code-comment: #6272a4;
   --code-keyword: #ff79c6;
   --code-string: #f1fa8c;
@@ -46,6 +45,41 @@
   /* Motion */
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --duration: 140ms;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --ground: #121211;
+    --ink: #ecebe7;
+    --pencil: #97948f;
+    --signal: #5fb2ce;
+    --alert: #e0796a;
+    --rule: #2b2a27;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --ground: #121211;
+  --ink: #ecebe7;
+  --pencil: #97948f;
+  --signal: #5fb2ce;
+  --alert: #e0796a;
+  --rule: #2b2a27;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --ground: #fcfcfb;
+  --ink: #1c1b19;
+  --pencil: #6e6c68;
+  --signal: #0e6a86;
+  --alert: #b23a28;
+  --rule: #e2e0dc;
 }
 
 /* ============================================================
@@ -102,12 +136,6 @@
     font-size: 18px;
     line-height: 1.65;
     -webkit-font-smoothing: antialiased;
-  }
-
-  /* La seleccion del editor del Om Theme, tambien la del textarea */
-  ::selection {
-    background: var(--rule);
-    color: var(--ink);
   }
 
   a {
