@@ -65,7 +65,7 @@ in tiers:
 - apis: imported modules and the functions and methods it calls
 - structures: the names it defines (functions, classes) and constructs such
   as `lambda`
-- domain: words from its docstrings
+- domain: words from its docstrings and comments
 
 Return one list of tags that covers both what the code says and what it does.
 Keep the seeds that would help find code doing the same thing, drop the ones

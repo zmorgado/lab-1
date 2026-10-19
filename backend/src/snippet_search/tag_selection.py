@@ -101,7 +101,8 @@ def _weighted_seeds(tiers: Tiers) -> list[_Seed]:
     """Los seeds por peso y, adentro de cada peso, en orden de aparicion.
 
     El AST los separa sin adivinar: un import es un nodo Import, un llamado un
-    Call, `lambda` una construccion y una palabra de dominio sale de un docstring.
+    Call, `lambda` una construccion y una palabra de dominio sale de un docstring
+    o de un comentario (#35).
     """
     imports = set(tiers.imports)
     definitions = [name for name in tiers.structures if name != "lambda"]

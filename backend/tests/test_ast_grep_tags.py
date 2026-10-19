@@ -95,3 +95,55 @@ def test_an_import_with_windows_line_endings_is_kept() -> None:
     snippet = "import numpy\r\nzeros = numpy.zeros(3)\r\n"
 
     assert extract_tags(snippet).apis == ("numpy", "zeros")
+
+
+# --- comentarios (#35) --------------------------------------------------------
+# El AST los descarta: se leen con tokenize, en los dos caminos
+
+
+COMMENTED = '''
+def rank(items):
+    """Order by score."""
+    # cosine similarity of embeddings
+    return sorted(items, key=weight)
+'''
+
+
+def test_words_from_comments_join_the_domain_tier_after_the_docstrings() -> None:
+    assert extract_tags(COMMENTED).domain == ("order", "score", "cosine", "similarity", "embeddings")
+
+
+def test_a_snippet_that_does_not_parse_still_reads_its_comments() -> None:
+    broken = "def rank(items):\n    # cosine similarity first\n    return sorted(items\n"
+
+    tiers = extract_tags(broken)
+
+    assert tiers.is_fallback
+    assert tiers.domain == ("cosine", "similarity", "first")
+
+
+def test_each_comment_gives_its_first_three_words_like_a_docstring() -> None:
+    snippet = "def rank(items):\n    # alpha bravo charlie delta\n    return items\n"
+
+    assert extract_tags(snippet).domain == ("alpha", "bravo", "charlie")
+
+
+def test_a_hash_inside_a_string_is_not_a_comment() -> None:
+    snippet = 'def rank(items):\n    label = "# cosine similarity"\n    return items\n'
+
+    assert extract_tags(snippet).domain == ()
+
+
+def test_tool_directives_are_not_prose() -> None:
+    # Ni el shebang, ni la codificacion, ni lo que leen linters y type checkers.
+    # De un TODO queda lo que dice, sin la marca
+    snippet = (
+        "#!/usr/bin/env python\n"
+        "# -*- coding: utf-8 -*-\n"
+        "import numpy  # noqa: F401\n"
+        "value = numpy.zeros(3)  # type: ignore[attr-defined]\n"
+        "# pragma: no cover\n"
+        "# TODO: handle empty input\n"
+    )
+
+    assert extract_tags(snippet).domain == ("handle", "empty", "input")

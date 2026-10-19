@@ -73,7 +73,7 @@ uv run pytest
 A GitHub-backed search engine: paste a snippet, get back ranked code on GitHub that does the same thing. Five stages, each matching on something different ~~(`docs/research/solution-schematics-v2.md`)~~:
 
 1. **Tags** (#4, #7) — the GREP service pulls APIs, structures and domain words out of the snippet with regex. An LLM service names what the code *is*: algorithm, data structures, paradigm, calls. Grep is the baseline and works alone; the LLM is a complement.
-2. **Tag selection** (#22) — both tag sources merge into one weighted pool of up to 20 (`tag_selection.py`: own names and docstring words, then calls, then imports), and the user picks tags and adds their own before searching.
+2. **Tag selection** (#22) — both tag sources merge into one weighted pool of up to 20 (`tag_selection.py`: own names and docstring and comment words, then calls, then imports), and the user picks tags and adds their own before searching.
 3. **Code search** (#3, #19) — the tags become a `search/code` query, run server-side through an authenticated proxy. Cheap and imprecise on purpose: it just cuts GitHub down to a handful of candidates.
 4. **AST** (#20) — the same GREP service parses the candidates, isolates subtrees by construct category, tag anchors and completeness, and prunes by length. It also produces the AST of the pasted snippet.
 5. **Embeddings** (#18, #21) — UniXcoder embeds the snippet and the surviving candidates; cosine similarity ranks them. This is where "different text, same function" gets caught.
