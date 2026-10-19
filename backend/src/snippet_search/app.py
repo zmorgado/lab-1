@@ -26,7 +26,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
 from .ast_grep_tags import SUPPORTED_LANGUAGES, Tiers, extract_tags
 from .config import Settings, load_settings
-from .github import GitHubClient, GitHubError, RateLimit
+from .github import ERROR_QUERY_INVALID, GitHubClient, GitHubError, RateLimit
 from .llm_tags import GeminiTagService, LlmTagError
 from .pipeline import Ranker, SearchError, preview, search, unixcoder_rank
 from .search_api import PreviewRequest, PreviewResponse, SearchRequest, SearchResponse
@@ -99,10 +99,11 @@ def create_app(settings: Settings | None = None, rank: Ranker = unixcoder_rank) 
 
     @app.exception_handler(GitHubError)
     async def handle_github_error(_: Request, error: GitHubError) -> Response:
-        # El status y el body de GitHub pasan tal cual: #9 los mapea a codigos estables
+        # El status se conserva, pero el body de GitHub no: el cliente recibe el
+        # code estable y una copy nuestra (#9)
         return JSONResponse(
             status_code=error.status_code,
-            content=error.body,
+            content=error.as_body,
             headers=_rate_limit_headers(error.rate_limit),
         )
 
@@ -194,7 +195,9 @@ def create_app(settings: Settings | None = None, rank: Ranker = unixcoder_rank) 
 
 def _invalid(message: str) -> JSONResponse:
     """422, el mismo status que usa FastAPI para un query param invalido."""
-    return JSONResponse(status_code=422, content={"message": message})
+    return JSONResponse(
+        status_code=422, content={"code": ERROR_QUERY_INVALID, "message": message}
+    )
 
 
 def _seed_tiers(payload: TagsRequest) -> Tiers | None:

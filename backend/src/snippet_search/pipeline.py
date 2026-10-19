@@ -491,5 +491,5 @@ async def _fetch(
 
 
 def _github_reason(error: GitHubError) -> str:
-    message = error.body.get("message") if isinstance(error.body, dict) else None
-    return f"GitHub {error.status_code}: {message or 'no message'}"
+    # El motivo sale del code estable, no de la prosa de GitHub (#9)
+    return f"{error.code}: {error.message}"

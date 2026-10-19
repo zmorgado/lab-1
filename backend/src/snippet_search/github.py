@@ -11,7 +11,7 @@ import base64
 import binascii
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Any, Generic, TypeVar
+from typing import Any, Final, Generic, TypeVar
 
 import httpx
 
@@ -30,6 +30,34 @@ UPSTREAM_UNREACHABLE_STATUS = 502
 
 # No aparece en texto y si en cualquier binario
 NUL_BYTE = b"\x00"
+
+# Codigos estables de error (#9). Salen del status, nunca del texto que manda
+# GitHub: esa prosa puede cambiar sin aviso. El frontend traduce el code a la
+# copy que ve el usuario.
+ERROR_UNAUTHENTICATED: Final = "unauthenticated"
+ERROR_RATE_LIMITED: Final = "rate_limited"
+ERROR_QUERY_INVALID: Final = "query_invalid"
+ERROR_UPSTREAM_UNAVAILABLE: Final = "upstream_unavailable"
+# El archivo existe pero no se puede usar como fuente (directorio, binario,
+# demasiado grande): no es una falla de GitHub ni algo que se arregle en la query
+ERROR_CONTENT_UNUSABLE: Final = "content_unusable"
+
+ERROR_MESSAGES: Final[dict[str, str]] = {
+    ERROR_UNAUTHENTICATED: (
+        "The GitHub credential is missing or was rejected. This is a "
+        "configuration problem on the service's side, not the user's query."
+    ),
+    ERROR_RATE_LIMITED: (
+        "GitHub's shared search budget is exhausted. Wait a moment and try again."
+    ),
+    ERROR_QUERY_INVALID: (
+        "GitHub rejected the search query. Change the tags or the snippet and try again."
+    ),
+    ERROR_UPSTREAM_UNAVAILABLE: (
+        "GitHub could not be reached or is unavailable. Try again in a while."
+    ),
+    ERROR_CONTENT_UNUSABLE: "The file could not be read as source code.",
+}
 
 T = TypeVar("T")
 
@@ -93,8 +121,8 @@ class GitHubResponse(Generic[T]):
 class GitHubError(Exception):
     """GitHub rechazo el request, o no se lo pudo alcanzar.
 
-    Lleva el body original: #9 lo va a mapear a codigos de error estables, asi
-    que el detalle no se pierde aca.
+    El `code` es estable y sale del status (#9); el `body` original se conserva
+    para diagnostico, pero no viaja al cliente.
     """
 
     def __init__(
@@ -106,7 +134,36 @@ class GitHubError(Exception):
         self.status_code = status_code
         self.body = body
         self.rate_limit = rate_limit
-        super().__init__(f"GitHub responded {status_code}: {body!r}")
+        self.code = error_code(status_code)
+        super().__init__(f"GitHub responded {status_code} ({self.code}): {body!r}")
+
+    @property
+    def message(self) -> str:
+        """La copy estable del code, en ingles como el resto de la API."""
+        return ERROR_MESSAGES[self.code]
+
+    @property
+    def as_body(self) -> dict[str, str]:
+        """El cuerpo JSON del error, con la misma forma que el resto del proxy."""
+        return {"code": self.code, "message": self.message}
+
+
+def error_code(status_code: int) -> str:
+    """El code estable que le corresponde a un status de GitHub.
+
+    No mira el body: GitHub devuelve 403 tanto por rate limit primario como por
+    secundario, y en esta API eso es lo que significa casi siempre. Una
+    credencial rechazada es 401; si falta del todo, el servicio no arranca.
+    """
+    if status_code in (LARGE_FILE_STATUS, UNUSABLE_CONTENT_STATUS):
+        return ERROR_CONTENT_UNUSABLE
+    if status_code == 401:
+        return ERROR_UNAUTHENTICATED
+    if status_code in (403, 429):
+        return ERROR_RATE_LIMITED
+    if status_code in (400, 422):
+        return ERROR_QUERY_INVALID
+    return ERROR_UPSTREAM_UNAVAILABLE
 
 
 class GitHubClient:

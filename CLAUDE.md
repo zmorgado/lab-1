@@ -98,7 +98,7 @@ Everything in this section lives under `frontend/`, and the paths below are rela
 
 React 19, Vite 8, Tailwind v4 (via `@tailwindcss/vite`, not a PostCSS config), axios, and `prism-react-renderer` for highlighting. One page, no router. `@/` is aliased to `src/` in both `vite.config.ts` and the tsconfigs — use it rather than deep relative paths.
 
-The page talks only to our backend, at `VITE_API_URL` (default `http://127.0.0.1:8000`, `src/constants/api.ts`), and knows nothing about GitHub's API. #38 built it and #22 added tag editing; filters (#19) and the error taxonomy (#9) are still to come.
+The page talks only to our backend, at `VITE_API_URL` (default `http://127.0.0.1:8000`, `src/constants/api.ts`), and knows nothing about GitHub's API. #38 built it, #22 added tag editing, and #9 added the error taxonomy: the backend's stable `code` is what the page turns into copy, never GitHub's prose. Filters (#19) are still to come.
 
 The directory names encode a layering that is worth respecting:
 

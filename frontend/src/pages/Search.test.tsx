@@ -431,13 +431,17 @@ describe('the end of a search', () => {
     expect(await screen.findByRole('region', { name: /results/i })).toBeTruthy()
   })
 
-  it("never shows GitHub's own text when the search fails, and can go back to the tags", async () => {
+  it('never shows GitHub\'s own text when the search fails, and can go back to the tags', async () => {
     server.use(
       previewRoute(PREVIEW),
-      // Un error de GitHub viaja con su status y su body, sin code nuestro
+      // El backend clasifica la falla de GitHub en un code estable y su propio
+      // message (#9); la prosa de arriba no viaja
       http.post(`${API}/api/search`, () =>
         HttpResponse.json(
-          { message: 'API rate limit exceeded for installation ID 4242.', documentation_url: 'https://docs.github.com' },
+          {
+            code: 'rate_limited',
+            message: 'API rate limit exceeded for installation ID 4242.',
+          },
           { status: 403 },
         ),
       ),
@@ -449,7 +453,7 @@ describe('the end of a search', () => {
     await user.click(screen.getByRole('button', { name: /search with these tags/i }))
 
     const alert = await screen.findByRole('alert')
-    expect(alert.textContent).toMatch(/went wrong.*HTTP 403/)
+    expect(alert.textContent).toMatch(/wait a minute/i)
     expect(screen.queryByText(/rate limit exceeded/i)).toBeNull()
 
     await user.click(screen.getByRole('button', { name: /back to the tags/i }))
@@ -470,6 +474,54 @@ describe('the end of a search', () => {
     expect(snippetBox().value).toBe(METHOD)
     expect(snippetBox().readOnly).toBe(false)
     expect(screen.queryByRole('region', { name: /results/i })).toBeNull()
+  })
+})
+
+// --- la taxonomia de errores (#9) ---------------------------------------------
+
+describe('explaining each failure', () => {
+  // El fallo llega en el paso de busqueda, con el code que clasifico el proxy
+  async function failTheSearch(body: JsonBodyType) {
+    server.use(
+      previewRoute(PREVIEW),
+      http.post(`${API}/api/search`, () => HttpResponse.json(body, { status: 503 })),
+    )
+    const user = userEvent.setup()
+    render(<Search />)
+    await searchWithTags(user)
+    return await screen.findByRole('alert')
+  }
+
+  it.each([
+    ['unauthenticated', /credential/i, /setup problem/i],
+    ['rate_limited', /wait a minute/i, /nothing is broken/i],
+    ['query_invalid', /change a tag or the snippet/i, /rejected this search query/i],
+    ['upstream_unavailable', /isn't answering right now/i, /try again in a while/i],
+  ])('tells the user what to do about %s', async (code, actionable, about) => {
+    const alert = await failTheSearch({
+      code,
+      message: 'Backend wording that may change.',
+    })
+
+    expect(alert.textContent).toMatch(actionable)
+    expect(alert.textContent).toMatch(about)
+    // La copy sale del code, nunca del message del backend
+    expect(screen.queryByText(/backend wording/i)).toBeNull()
+  })
+
+  it('keeps a network failure apart from a search that found nothing', async () => {
+    const alert = await failTheSearch({ code: 'upstream_unavailable', message: 'Ignored.' })
+
+    expect(alert.textContent).toMatch(/github/i)
+    expect(screen.queryByRole('region', { name: /results/i })).toBeNull()
+    expect(alert.textContent).not.toMatch(/nothing on github/i)
+  })
+
+  it('says something sensible for a code it does not know', async () => {
+    const alert = await failTheSearch({ message: 'A raw payload nobody mapped.' })
+
+    expect(alert.textContent).toMatch(/something went wrong/i)
+    expect(screen.queryByText(/raw payload/i)).toBeNull()
   })
 })
 

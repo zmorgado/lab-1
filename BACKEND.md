@@ -100,9 +100,9 @@ Enterprise, or a fake in tests).
 | `POST /api/search` | the full run: tags, queries, the ranked results (#8) and GitHub's raw bodies (see below) |
 
 The proxy endpoints are a thin pass-through: they attach the credential and
-forward. They do not build queries or reshape results (#8), and GitHub's error
-status and body are relayed as-is for #9 to map to stable error codes. Only
-`/api/search` and its preview build queries.
+forward. They do not build queries or reshape results (#8), and an upstream
+failure leaves as a stable `code` plus our own `message` — never GitHub's prose
+(see Error taxonomy below). Only `/api/search` and its preview build queries.
 
 `/api/contents` base64-decodes GitHub's envelope and returns just the source,
 which is what the AST stage (#20) needs; `search/code` gives back repo, path and
@@ -135,6 +135,35 @@ Both targets are long-lived public repositories, so this check works for anyone
 with a token, whatever their access. Note that a search run against **your** own
 token also returns private repositories you can see (`docs/research/tests.md`
 shows one), which is why #8 dedupes on `sha` and drops private hits.
+
+## Error taxonomy (#9)
+
+Every failure leaves as JSON with a stable `code`; the `message` is ours and may
+change. `github.py::error_code` maps GitHub's status to the code, **without
+reading the body** — GitHub's prose can be reworded at any time, so nothing in
+the service matches on it. The status is preserved, so clients can still branch
+on it, and `X-RateLimit-*` / `Retry-After` keep travelling on errors.
+
+| `code` | HTTP | Meaning |
+| --- | --- | --- |
+| `unauthenticated` | 401 | The credential was rejected; missing it stops startup (`MissingCredentialError`) |
+| `rate_limited` | 403, 429 | The shared budget is spent, or GitHub paused for abuse; `Retry-After` is forwarded |
+| `query_invalid` | 400, 422 | GitHub rejected the query, or the proxy rejected its parameters |
+| `upstream_unavailable` | 5xx, network | GitHub could not be reached, or answered with a server error |
+| `content_unusable` | 413, 415 | The file exists but cannot be read as source (directory, binary, too large, not UTF-8) |
+
+`/api/search` adds the pipeline's own codes, which never reach GitHub:
+`nothing_to_search`, `unsupported_language` and `invalid_tag` (422). Per-query
+and per-file failures inside a run are not fatal: they travel as the same stable
+`code: message` text in `QueryOut.error` and `SkippedOut.reason`.
+
+The frontend keys its copy by `code` (`utility/ErrorCopy.ts`) and never shows the
+backend's `message` or GitHub's text; a code it does not know still gets a
+sensible generic line. A true network failure — the browser not reaching the
+proxy at all — arrives with no response, so `getAxiosData` gives it `status:
+null` and it is a different case from `upstream_unavailable`, which means the
+proxy answered but GitHub did not. Neither is ever confused with a search that
+legitimately found nothing, which is not an error.
 
 ## Embedding stage (#21)
 

@@ -97,14 +97,43 @@ async def test_search_code_raises_with_githubs_own_message(client: GitHubClient)
 
     error = excinfo.value
     assert error.status_code == 422
-    # El body de GitHub viaja entero: #9 lo va a mapear a codigos de error
+    # El body de GitHub se conserva para diagnostico, pero el cliente recibe el
+    # code estable (#9): la prosa de arriba no viaja
     assert error.body == {
         "message": "Validation Failed",
         "errors": [{"message": "Only 256 chars"}],
     }
+    assert error.code == "query_invalid"
     # El rate limit se conserva incluso en el camino de error
     assert error.rate_limit is not None
     assert error.rate_limit.remaining == 9
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [
+        (401, "unauthenticated"),
+        (403, "rate_limited"),
+        (429, "rate_limited"),
+        (400, "query_invalid"),
+        (422, "query_invalid"),
+        (404, "upstream_unavailable"),
+        (500, "upstream_unavailable"),
+        (502, "upstream_unavailable"),
+    ],
+)
+def test_errors_are_classified_by_status_not_by_prose(status: int, code: str) -> None:
+    # El mismo code sin importar lo que GitHub escriba en el body
+    error = GitHubError(status, {"message": "Whatever GitHub says today"})
+
+    assert error.code == code
+    assert "Whatever GitHub says today" not in error.as_body["message"]
+
+
+def test_unusable_content_has_its_own_code() -> None:
+    # 413/415 los arma el proxy, no GitHub: no son una query invalida
+    assert GitHubError(413, {}).code == "content_unusable"
+    assert GitHubError(415, {}).code == "content_unusable"
 
 
 @respx.mock

@@ -14,7 +14,13 @@ import respx
 
 from snippet_search import pipeline
 from snippet_search.ast_grep_tags import Tiers
-from snippet_search.github import GitHubClient, GitHubError
+from snippet_search.github import (
+    ERROR_MESSAGES,
+    ERROR_QUERY_INVALID,
+    ERROR_UPSTREAM_UNAVAILABLE,
+    GitHubClient,
+    GitHubError,
+)
 from snippet_search.llm_tags import (
     ERROR_LLM_QUOTA,
     KIND_CONCEPTUAL,
@@ -197,7 +203,7 @@ async def test_files_that_cannot_be_used_are_skipped_with_a_reason(github: GitHu
     reasons = {skipped.repo: skipped.reason for skipped in outcome.skipped}
     assert reasons == {
         "example-org/django-template": "syntax error at line 1: not valid Python",
-        "example-org/gone": "GitHub 404: Not Found",
+        "example-org/gone": f"{ERROR_UPSTREAM_UNAVAILABLE}: {ERROR_MESSAGES[ERROR_UPSTREAM_UNAVAILABLE]}",
     }
     # El privado ni se pide ni se nombra (#8): solo se cuenta
     assert not private.called
@@ -310,7 +316,7 @@ async def test_a_failing_query_does_not_sink_the_others(github: GitHubClient) ->
     outcome = await search(github, INSERT_SORTED, "python", llm=StubLlm(TWO_KINDS), rank=StubRanker())
 
     assert {run.kind: run.error for run in outcome.queries} == {
-        KIND_SYNTACTIC: "GitHub 422: Validation Failed",
+        KIND_SYNTACTIC: f"{ERROR_QUERY_INVALID}: {ERROR_MESSAGES[ERROR_QUERY_INVALID]}",
         KIND_CONCEPTUAL: None,
     }
     assert {kinds(r) for r in outcome.results} == {(KIND_CONCEPTUAL,)}
@@ -326,6 +332,7 @@ async def test_if_every_query_fails_the_search_fails(github: GitHubClient) -> No
         await search(github, INSERT_SORTED, "python", llm=StubLlm(TWO_KINDS), rank=StubRanker())
 
     assert exc.value.status_code == 403
+    assert exc.value.code == "rate_limited"
 
 
 @respx.mock
