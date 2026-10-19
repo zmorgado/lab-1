@@ -159,11 +159,17 @@ and per-file failures inside a run are not fatal: they travel as the same stable
 
 The frontend keys its copy by `code` (`utility/ErrorCopy.ts`) and never shows the
 backend's `message` or GitHub's text; a code it does not know still gets a
-sensible generic line. A true network failure — the browser not reaching the
-proxy at all — arrives with no response, so `getAxiosData` gives it `status:
-null` and it is a different case from `upstream_unavailable`, which means the
-proxy answered but GitHub did not. Neither is ever confused with a search that
-legitimately found nothing, which is not an error.
+sensible generic line. The same map covers the LLM codes (#7): a missing or
+rejected model key (`llm_not_configured`, `llm_auth`) reads as a setup problem,
+while a spent quota or a provider that is down (`llm_quota_exhausted`,
+`llm_unavailable`) reads as wait-and-retry. When the model fails but the run
+continues, `TagConfirmation` keys its note off the same code. A true network
+failure — the browser not reaching the proxy at all — arrives with no response,
+so `getAxiosData` gives it `status: null` and it is a different case from
+`upstream_unavailable`, which means the proxy answered but GitHub did not; its
+copy also names a missing `GITHUB_TOKEN` as a possible cause, since a service
+without one dies at startup and never reaches the browser. Neither is ever
+confused with a search that legitimately found nothing, which is not an error.
 
 ## Embedding stage (#21)
 
@@ -446,7 +452,8 @@ GEMINI_MODEL=...         # optional, defaults to gemini-3.8-flash
 ```
 
 The key is optional: the LLM is a complement (#1), so without it the service
-starts and `/api/tags` answers `llm_unavailable`.
+starts and `/api/tags` answers `llm_not_configured` (a setup problem, not a
+provider outage).
 
 **Errors** leave as JSON with a stable `code`; the provider's text travels in
 `message` and may change.
@@ -454,9 +461,10 @@ starts and `/api/tags` answers `llm_unavailable`.
 | `code` | HTTP | Meaning |
 | --- | --- | --- |
 | `empty_source` | 422 | Nothing to extract from |
+| `llm_not_configured` | 503 | No key: the service is missing `GEMINI_API_KEY` (configuration, not a provider outage) |
 | `llm_auth` | 502 | Our key was rejected (not 401: it is not the user's credential) |
 | `llm_quota_exhausted` | 429 | Free-tier quota spent; `Retry-After` is forwarded |
-| `llm_unavailable` | 503 | No key, provider down, overloaded or unreachable |
+| `llm_unavailable` | 503 | Provider down, overloaded or unreachable |
 | `llm_malformed_response` | 502 | The model answered something unparseable |
 | `llm_request_failed` | 502 | Anything else |
 

@@ -48,6 +48,9 @@ GEMINI_TIMEOUT_SECONDS: Final = 60.0
 # extraction"). El texto del proveedor cambia y esta en ingles de Google; esto
 # no cambia, y es lo que mira quien llama para decidir si cae al grep (#4).
 ERROR_EMPTY_SOURCE: Final = "empty_source"
+# Falta la key: es un problema de configuracion, no una caida del proveedor. El
+# cliente lo dice distinto, y sin este code lo trataria como algo pasajero
+ERROR_LLM_NOT_CONFIGURED: Final = "llm_not_configured"
 ERROR_LLM_AUTH: Final = "llm_auth"
 ERROR_LLM_QUOTA: Final = "llm_quota_exhausted"
 ERROR_LLM_UNAVAILABLE: Final = "llm_unavailable"
@@ -181,6 +184,7 @@ class LlmTagError(RuntimeError):
             ERROR_EMPTY_SOURCE: 422,
             ERROR_LLM_QUOTA: 429,
             ERROR_LLM_UNAVAILABLE: 503,
+            ERROR_LLM_NOT_CONFIGURED: 503,
         }.get(code, 502)
         self.retry_after = retry_after
         # El pipeline puede seguir con los tags del grep (#4) salvo que el
@@ -245,10 +249,12 @@ class GeminiTagService:
 
         if not self._settings.gemini_api_key:
             # El LLM es un complemento: sin key el resto del servicio anda y el
-            # cliente cae al grep, igual que si el proveedor estuviera caido
+            # cliente cae al grep, igual que si el proveedor estuviera caido.
+            # Pero el code es propio: 'falta configurarlo' no es 'el proveedor
+            # no contesta', y el frontend los dice distinto (#9)
             raise LlmTagError(
                 "The LLM is not configured: GEMINI_API_KEY is empty.",
-                code=ERROR_LLM_UNAVAILABLE,
+                code=ERROR_LLM_NOT_CONFIGURED,
             )
 
         payload = self._build_payload(source, language=language, tiers=tiers)

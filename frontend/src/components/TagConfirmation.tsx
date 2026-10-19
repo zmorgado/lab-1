@@ -3,6 +3,7 @@ import Button from '@/components/Button'
 import StepHeading from '@/components/StepHeading'
 import { AST_KIND, MAX_TAG_LENGTH } from '@/constants/tags'
 import type { TagGroup, TagPreview } from '@/types/TagPreview'
+import { modelFallbackCopy } from '@/utility/ErrorCopy'
 
 const KINDS = new Map([
   ['syntactic', { label: 'Syntactic', note: 'The names a near-literal copy would share.' }],
@@ -46,11 +47,7 @@ export default function TagConfirmation({
         whether it came from the snippet's syntax tree (AST), the model, or you.
       </p>
       {astOnly && (
-        <p className="mt-3 max-w-prose text-base text-pencil">
-          {preview.modelError
-            ? 'The model was unavailable, so these tags come from the syntax tree alone, in one query instead of three.'
-            : 'The model found nothing worth searching for, so these tags come from the syntax tree alone.'}
-        </p>
+        <p className="mt-3 max-w-prose text-base text-pencil">{modelFallbackCopy(preview.modelError)}</p>
       )}
       {preview.textScan && (
         <p className="mt-3 max-w-prose text-base text-pencil">

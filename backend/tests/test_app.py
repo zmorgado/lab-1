@@ -345,7 +345,7 @@ def test_search_returns_the_tags_alongside_githubs_results(client: TestClient) -
                 "error": None,
             }
         ],
-        "llm": {"tags": None, "error": "llm_unavailable"},
+        "llm": {"tags": None, "error": "llm_not_configured"},
         "snippet": {"category": "function", "fallback": False, "lines": 2},
         "anchors": ["sorted", "items", "sort_dictionary", "lambda"],
         # Ninguno llego al AST: resultado vacio explicito (#8)

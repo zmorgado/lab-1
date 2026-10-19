@@ -154,13 +154,18 @@ describe('confirming the tags', () => {
     expect(tagsOf(/paradigm/i)).toEqual(['itemgetter model'])
   })
 
-  it('falls back to the AST tags, says the model was unavailable, and carries on', async () => {
+  it.each([
+    ['llm_unavailable', /model was unavailable/i],
+    ['llm_not_configured', /isn't configured on this service/i],
+    ['llm_auth', /rejected this service's api key/i],
+    ['llm_quota_exhausted', /free quota is used up/i],
+  ])('falls back to the AST tags, explains %s, and carries on', async (code, copy) => {
     server.use(
       http.post(`${API}/api/search/preview`, () =>
         HttpResponse.json({
           pool: pooled('tiers', 'seed', 'sorted', 'rank'),
           queries: [{ kind: 'tiers', tags: ['sorted', 'rank'], dropped: [], q: 'sorted rank language:python' }],
-          llm: { error: 'llm_unavailable' },
+          llm: { error: code },
           is_fallback: false,
         }),
       ),
@@ -170,9 +175,29 @@ describe('confirming the tags', () => {
 
     await proposeTags(user)
 
-    expect(await screen.findByText(/model was unavailable/i)).toBeTruthy()
+    expect(await screen.findByText(copy)).toBeTruthy()
     expect(tagsOf(/syntax tree/i)).toEqual(['sorted AST', 'rank AST'])
     expect(screen.getByRole('button', { name: /search with these tags/i })).toHaveProperty('disabled', false)
+  })
+
+  it('says the model found nothing when it ran but returned no tags', async () => {
+    server.use(
+      http.post(`${API}/api/search/preview`, () =>
+        HttpResponse.json({
+          pool: pooled('tiers', 'seed', 'sorted', 'rank'),
+          queries: [{ kind: 'tiers', tags: ['sorted', 'rank'], dropped: [], q: 'sorted rank language:python' }],
+          llm: { error: null },
+          is_fallback: false,
+        }),
+      ),
+    )
+    const user = userEvent.setup()
+    render(<Search />)
+
+    await proposeTags(user)
+
+    expect(await screen.findByText(/found nothing worth searching for/i)).toBeTruthy()
+    expect(tagsOf(/syntax tree/i)).toEqual(['sorted AST', 'rank AST'])
   })
 
   it('goes back to the snippet, kept for editing', async () => {
@@ -242,7 +267,11 @@ describe('confirming the tags', () => {
 
     await proposeTags(user)
 
-    expect((await screen.findByRole('alert')).textContent).toMatch(/isn't answering at http:\/\/127\.0\.0\.1:8000/)
+    const alert = (await screen.findByRole('alert')).textContent ?? ''
+    expect(alert).toMatch(/isn't answering at http:\/\/127\.0\.0\.1:8000/)
+    // Un servicio sin GITHUB_TOKEN muere al arrancar y nunca llega al browser:
+    // el unico lugar donde el usuario lo ve es esta copy
+    expect(alert).toMatch(/GITHUB_TOKEN/)
   })
 })
 
