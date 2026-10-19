@@ -65,7 +65,7 @@ in tiers:
 - apis: imported modules and the functions and methods it calls
 - structures: the names it defines (functions, classes) and constructs such
   as `lambda`
-- domain: words from its docstrings
+- domain: words from its docstrings and comments
 
 Return one list of tags that covers both what the code says and what it does.
 Keep the seeds that would help find code doing the same thing, drop the ones
@@ -372,7 +372,8 @@ def _clean(items: Any, seeds: frozenset[str]) -> tuple[Tag, ...]:
         text, kind = item.get("tag"), item.get("kind")
         if not isinstance(text, str) or kind not in KINDS:
             continue
-        text = text.strip()
+        # Una comilla romperia la frase en 'q', y el usuario no podria confirmar el tag (#35)
+        text = text.replace('"', "").strip()
         # 'Sort' y 'sort' cuentan como el mismo tag
         key = text.lower()
         if not text or key in seen or per_kind[kind] == MAX_TAGS_PER_KIND:

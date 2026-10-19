@@ -187,11 +187,17 @@ wait for the model and a model failure never fails the search.
 | `search_api.py` | the request and response models of `/api/search` and its preview, typed in `/openapi.json` |
 
 Tags come in three tiers, APIs (imports and calls), then structures (own
-`def`/`class` names and `lambda`), then a few docstring words. Keywords, generic
-builtins (`print`, `len`, ...), dunders and names under 3 characters are dropped.
+`def`/`class` names and `lambda`), then a few words from each docstring and each
+comment, docstrings first. Comments are read with `tokenize` on both paths, so a
+snippet that doesn't parse keeps the ones before the error, and a `#` inside a
+string isn't one. Tool directives (`# noqa`, `# type: ignore`, shebang, coding)
+give no words (#35). Keywords, generic builtins (`print`, `len`, ...), dunders and
+names under 3 characters are dropped.
 `build_query` fills the query in the order given, up to 6 tags and 256 characters
 on the `q` value, so truncation keeps the highest tiers. It takes any tag list and
-quotes multi-word tags, so #22 can feed it the merged and edited list.
+quotes multi-word tags, so #22 can feed it the merged and edited list. It skips
+empty tags and takes `"` out of a term, so no tag can unbalance `q` (#35);
+`SearchQuery.tags` keeps each tag as given.
 
 The run: AST tiers → LLM list (#7, #22) → one `search/code` query per kind of
 tag (#19) → files merged → each file through `/repos/{repo}/contents/{path}` at
@@ -296,14 +302,14 @@ guessing:
 
 | Weight | Seeds | Model tags without a seed |
 | --- | --- | --- |
-| 1, domain | the snippet's own `def`/`class` names, docstring words | `conceptual` |
+| 1, domain | the snippet's own `def`/`class` names, docstring and comment words | `conceptual` |
 | 2, API | calls, `lambda` | `syntactic`, `paradigm` |
 | 3, import | imported modules (`Tiers.imports`) | |
 
 - **With the model**, its tags are all selected, each feeding the query of its
   kind. The seeds it dropped fill the rest of the pool unselected, so an internal
   module like `ringr_agents` only goes in if the user picks it. Each seed goes to
-  a group: names and calls `syntactic`, docstring words `conceptual`, `lambda` and
+  a group: names and calls `syntactic`, docstring and comment words `conceptual`, `lambda` and
   imports `paradigm`.
 - **Without it**, or when it leaves nothing searchable, every seed goes to the
   `tiers` query by weight, and the ones that fit it are selected.

@@ -8,14 +8,19 @@ Los saca del AST cuando el snippet parsea: no ve 'sorted(' dentro de un string
 ni de un comentario, y el docstring es el docstring. Un snippet que no parsea
 (incompleto, sangrado) cae al regex sobre el texto suelto, que igual saca
 tags: un snippet pegado suele llegar roto.
+
+Los comentarios, que el AST descarta, se leen con tokenize en los dos caminos
+(#35): sus palabras van al nivel de dominio, despues de las de los docstrings.
 """
 
 from __future__ import annotations
 
 import ast
+import io
 import keyword
 import re
 import textwrap
+import tokenize
 from collections.abc import Container, Iterable
 from dataclasses import dataclass
 
@@ -54,7 +59,17 @@ DEFINITION_PATTERN = re.compile(
 LAMBDA_PATTERN = re.compile(r"\blambda\b")
 DOCSTRING_PATTERN = re.compile('"""(.*?)"""|\'\'\'(.*?)\'\'\'', re.DOTALL)
 DOMAIN_WORD_PATTERN = re.compile(r"\b[A-Za-z]{4,}\b")
+# Un comentario aporta como un docstring: sus primeras palabras
 DOMAIN_WORDS_PER_DOCSTRING = 3
+
+# Comentarios que no son prosa: shebang, codificacion, y lo que leen linters y
+# type checkers. Sus palabras ('noqa', 'ignore') no buscan nada
+COMMENT_DIRECTIVE_PATTERN = re.compile(
+    r"#\s*(?:!|-\*-|coding[:=]|noqa\b|nosec\b|(?:type|pragma|fmt|pylint|mypy|isort|ruff)\s*:)",
+    re.IGNORECASE,
+)
+# De un 'TODO: ...' queda lo que dice, sin la marca
+COMMENT_MARKERS = frozenset({"todo", "fixme", "hack"})
 
 
 @dataclass(frozen=True)
@@ -83,7 +98,7 @@ def extract_tags(snippet: str) -> Tiers:
         tree = ast.parse(textwrap.dedent(snippet))
     except (SyntaxError, ValueError):
         return _extract_tags_regex(snippet)
-    return _AstTagExtractor().extract(tree)
+    return _AstTagExtractor().extract(tree, _comment_words(snippet))
 
 
 class _AstTagExtractor(ast.NodeVisitor):
@@ -96,7 +111,7 @@ class _AstTagExtractor(ast.NodeVisitor):
         self.docstrings: list[str] = []
         self.has_lambda = False
 
-    def extract(self, tree: ast.Module) -> Tiers:
+    def extract(self, tree: ast.Module, comment_words: Iterable[str] = ()) -> Tiers:
         module_docstring = ast.get_docstring(tree)
         if module_docstring:
             self.docstrings.append(module_docstring)
@@ -112,6 +127,7 @@ class _AstTagExtractor(ast.NodeVisitor):
         for doc in self.docstrings:
             found = DOMAIN_WORD_PATTERN.findall(doc)
             words.extend(word.lower() for word in found[:DOMAIN_WORDS_PER_DOCSTRING])
+        words.extend(comment_words)
         domain = _keep_distinctive(words, exclude={*apis, *structures})
 
         imports = tuple(name for name in apis if name in self.imports)
@@ -195,6 +211,7 @@ def _extract_tags_regex(snippet: str) -> Tiers:
     for double, single in DOCSTRING_PATTERN.findall(snippet):
         found = DOMAIN_WORD_PATTERN.findall(double or single)
         words.extend(word.lower() for word in found[:DOMAIN_WORDS_PER_DOCSTRING])
+    words.extend(_comment_words(snippet))
     domain = _keep_distinctive(words, exclude={*apis, *structures})
 
     return Tiers(
@@ -204,6 +221,28 @@ def _extract_tags_regex(snippet: str) -> Tiers:
         imports=tuple(name for name in apis if name in imports),
         is_fallback=True,
     )
+
+
+def _comment_words(snippet: str) -> list[str]:
+    """Las palabras de dominio de los comentarios, con las primeras de cada uno.
+
+    Con tokenize y no con un regex: un '#' adentro de un string no es un
+    comentario. Con un snippet roto, quedan los comentarios leidos hasta el error.
+    """
+    words: list[str] = []
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(textwrap.dedent(snippet)).readline):
+            if token.type != tokenize.COMMENT or COMMENT_DIRECTIVE_PATTERN.match(token.string):
+                continue
+            found = [
+                word
+                for word in DOMAIN_WORD_PATTERN.findall(token.string)
+                if word.lower() not in COMMENT_MARKERS
+            ]
+            words.extend(word.lower() for word in found[:DOMAIN_WORDS_PER_DOCSTRING])
+    except (tokenize.TokenError, SyntaxError):
+        pass
+    return words
 
 
 def _keep_distinctive(names: Iterable[str], exclude: Container[str] = ()) -> tuple[str, ...]:

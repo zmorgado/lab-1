@@ -187,6 +187,19 @@ async def test_blank_and_repeated_tags_are_dropped() -> None:
     assert [t.text for t in tags.tags] == ["sorted"]
 
 
+async def test_double_quotes_are_taken_out_of_a_tag() -> None:
+    # #35: una comilla romperia la frase en 'q', y el usuario no podria confirmar el tag
+    tags = {
+        "tags": [{"tag": 'say "hi"', "kind": "conceptual"}, {"tag": '""', "kind": "syntactic"}],
+        "language": "Python",
+    }
+    service = _service(lambda r: httpx.Response(200, json=_gemini_response(tags)))
+
+    result = await service.extract(SNIPPET)
+
+    assert [tag.text for tag in result.tags] == ["say hi"]
+
+
 async def test_a_kind_outside_the_three_queries_is_dropped() -> None:
     invented = {
         "tags": [{"tag": "binary search", "kind": "algorithm"}, {"tag": "sorted", "kind": "syntactic"}],

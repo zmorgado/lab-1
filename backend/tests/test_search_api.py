@@ -143,6 +143,24 @@ def test_the_preview_says_when_the_snippet_did_not_parse() -> None:
 
 
 @respx.mock
+def test_a_model_tag_with_a_double_quote_is_offered_without_it(client: TestClient) -> None:
+    # #35: con la comilla, confirmarlo daria invalid_tag, y el modelo lo volveria a proponer
+    tags = {"tags": [{"tag": 'say "hi"', "kind": "conceptual"}], "language": "Python"}
+    respx.post(GEMINI_URL).mock(return_value=httpx.Response(200, json=_gemini_response(tags)))
+
+    preview = client.post("/api/search/preview", json={"source": SNIPPET}).json()
+    offered = next(tag for tag in preview["pool"] if tag["source"] == "llm")
+    confirmed = client.post(
+        "/api/search/preview",
+        json={"source": SNIPPET, "tags": [{"tag": offered["tag"], "kind": offered["kind"]}]},
+    )
+
+    assert offered["tag"] == "say hi"
+    assert confirmed.status_code == 200
+    assert confirmed.json()["queries"][0]["q"] == '"say hi" language:python'
+
+
+@respx.mock
 def test_with_tags_the_preview_rebuilds_the_queries_without_the_model(client: TestClient) -> None:
     gemini = respx.post(GEMINI_URL).mock(return_value=httpx.Response(200, json=_gemini_response()))
     seven = [{"tag": f"term{n}", "kind": "syntactic"} for n in range(7)]
