@@ -26,27 +26,19 @@ type StatusLineProps = {
   className?: string
   // Con popup, la etiqueta entera es el boton que lo abre; sin el, es texto
   onExplain?: () => void
-  // Una nota que no frena nada (el modelo que cae y la busqueda sigue) no puede
-  // gastar el unico `--alert` del paso: se calla a pencil aunque el code sea de
-  // configuracion. `data-severity` sigue diciendo la familia real
-  quiet?: boolean
 }
 
 // Una falla impresa como linea: tono por familia, tipo y code estables arriba,
 // la copy abajo. El color solo no alcanza (WCAG 1.4.1), por eso el tipo y el
-// code van escritos y ademas en `data-*` para los tests
-export default function StatusLine({
-  code,
-  children,
-  className = '',
-  onExplain,
-  quiet = false,
-}: StatusLineProps) {
+// code van escritos y ademas en `data-*` para los tests. La misma linea sirve
+// para una falla que frena un paso y para la nota del modelo: el tono lo pone
+// el code, asi que `llm_not_configured` es un `setup` rojo aunque la busqueda
+// siga, y `llm_quota_exhausted` un `transient` callado
+export default function StatusLine({ code, children, className = '', onExplain }: StatusLineProps) {
   const severity = severityFor(code)
-  const tone = quiet ? 'transient' : severity
   const label = (
     <>
-      <span className={TONE[tone]}>{typeLabel(code)}</span>
+      <span className={TONE[severity]}>{typeLabel(code)}</span>
       {code && (
         <span className="rounded-xs border border-rule px-1.5 py-px font-mono text-[11px] text-pencil">
           {code}
@@ -57,7 +49,7 @@ export default function StatusLine({
 
   return (
     <div
-      className={`border-l-2 pl-4 ${RULE[tone]} ${className}`}
+      className={`border-l-2 pl-4 ${RULE[severity]} ${className}`}
       data-severity={severity}
       data-code={code ?? ''}
     >

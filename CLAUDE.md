@@ -125,7 +125,7 @@ Both waits count elapsed seconds and lock the controls. Nothing found is a plain
 The token layer at the top of `src/index.css` is the portfolio's (`zmorgado/portfolio`, `app/globals.css`), copied verbatim; its ADR 0005 owns the palette. Change it there, then copy the block down. Tailwind sees the tokens through `@theme`, with its own palette and font stacks reset to `initial`, so `text-pencil` exists and `text-slate-600` doesn't. No raw hex outside that file (the favicon carries literals, with a comment saying why).
 
 - Spectral for prose, IBM Plex Mono for data only: code, tags, paths, line ranges, scores, seconds.
-- `--signal` for links, the system acting (including the lines the model underlines) and a correctable failure; `--pencil` for secondary text and a transient failure; `--alert` at most once, on a setup failure that stops the step. A failure always prints its type and stable code next to the tone, so colour is never the only signal (WCAG 1.4.1).
+- `--signal` for links, the system acting (including the lines the model underlines) and a correctable failure; `--pencil` for secondary text and a transient failure; `--alert` for a setup failure — a credential, the service, or the model key — whether it stops the step or only drops the model's tags, and at most one shows at a time. A failure always prints its type and stable code next to the tone, so colour is never the only signal (WCAG 1.4.1).
 - No shadows, no filled cards, radius at most 2px. Colour transitions only; nothing loops. The page follows the system theme.
 - Code highlighting reads the tokens too: comments and docstrings in pencil, keywords at 600, the rest ink.
 

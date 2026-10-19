@@ -53,9 +53,10 @@ export default function TagConfirmation({
           <p className="mt-3 max-w-prose text-base text-pencil">{modelFallbackCopy(null)}</p>
         ) : (
           // Un code real: misma linea de estado que un fallo, porque dice por que
-          // los tags salen solo del AST y quien tendria que arreglarlo. `quiet`
-          // porque la busqueda sigue: el unico `--alert` es del paso que falla
-          <StatusLine code={preview.modelError} className="mt-3" quiet>
+          // los tags salen solo del AST y quien tendria que arreglarlo. El tono
+          // sale del code, asi que una clave que falta se ve como el setup rojo
+          // que es, aunque la busqueda siga con los tags del AST
+          <StatusLine code={preview.modelError} className="mt-3">
             {modelFallbackCopy(preview.modelError)}
           </StatusLine>
         ))}

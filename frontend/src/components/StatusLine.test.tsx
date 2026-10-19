@@ -7,12 +7,8 @@ afterEach(cleanup)
 // La linea de estado dice la familia con el tono de la regla, pero el color solo
 // no alcanza: el tipo y el code van escritos. `data-severity` deja el tono a la
 // vista de los tests sin leer clases
-function tone(code: string | null, quiet = false) {
-  const { container } = render(
-    <StatusLine code={code} quiet={quiet}>
-      The copy.
-    </StatusLine>,
-  )
+function tone(code: string | null) {
+  const { container } = render(<StatusLine code={code}>The copy.</StatusLine>)
   return container.querySelector('[data-severity]') as HTMLElement
 }
 
@@ -21,6 +17,10 @@ describe('the status line', () => {
     ['query_invalid', 'correctable', 'border-signal'],
     ['rate_limited', 'transient', 'border-pencil'],
     ['unauthenticated', 'setup', 'border-alert'],
+    // La nota del modelo usa la misma linea: una clave que falta es setup rojo,
+    // no un transitorio gris, aunque la busqueda siga con los tags del AST
+    ['llm_not_configured', 'setup', 'border-alert'],
+    ['llm_quota_exhausted', 'transient', 'border-pencil'],
   ])('tones %s as %s', (code, severity, rule) => {
     const line = tone(code)
 
@@ -40,15 +40,5 @@ describe('the status line', () => {
 
     expect(line.getAttribute('data-severity')).toBe('setup')
     expect(screen.getByText('Something went wrong')).toBeTruthy()
-  })
-
-  it('keeps a quiet note quiet even when its code is a setup problem', () => {
-    const line = tone('llm_not_configured', true)
-
-    // La familia real no se pierde...
-    expect(line.getAttribute('data-severity')).toBe('setup')
-    // ...pero el unico `--alert` del paso queda para lo que de verdad falla
-    expect(line.className).toContain('border-pencil')
-    expect(line.className).not.toContain('border-alert')
   })
 })
