@@ -17,8 +17,8 @@ from fastapi.testclient import TestClient
 from snippet_search.app import create_app
 from snippet_search.llm_tags import (
     ERROR_EMPTY_SOURCE,
+    ERROR_LLM_NOT_CONFIGURED,
     ERROR_LLM_QUOTA,
-    ERROR_LLM_UNAVAILABLE,
 )
 
 from conftest import SETTINGS as BASE_SETTINGS
@@ -109,14 +109,14 @@ def test_an_empty_snippet_is_rejected_without_a_fallback_hint(client: TestClient
     assert "fallback" not in body
 
 
-def test_without_a_key_the_tags_endpoint_says_llm_unavailable() -> None:
+def test_without_a_key_the_tags_endpoint_says_llm_not_configured() -> None:
     # #1: el LLM es un complemento. Sin key el back arranca y el resto anda
     with TestClient(create_app(replace(SETTINGS, gemini_api_key=None))) as client:
         response = client.post("/api/tags", json={"source": SNIPPET})
         health = client.get("/health")
 
     assert response.status_code == 503
-    assert response.json()["code"] == ERROR_LLM_UNAVAILABLE
+    assert response.json()["code"] == ERROR_LLM_NOT_CONFIGURED
     assert response.json()["fallback"] == "grep"
     assert health.status_code == 200
 

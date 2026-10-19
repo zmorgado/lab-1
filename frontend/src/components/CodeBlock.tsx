@@ -1,15 +1,6 @@
-import { Highlight, type PrismTheme } from 'prism-react-renderer'
+import { Highlight } from 'prism-react-renderer'
 import type { LineRange } from '@/types/Explanations'
-
-// El tema lee los tokens, sin paleta de la libreria: comentarios y docstrings en
-// pencil, keywords en 600, todo lo demas en ink
-const THEME: PrismTheme = {
-  plain: { color: 'var(--ink)', backgroundColor: 'transparent' },
-  styles: [
-    { types: ['comment', 'triple-quoted-string'], style: { color: 'var(--pencil)' } },
-    { types: ['keyword', 'boolean'], style: { fontWeight: '600' } },
-  ],
-}
+import { CODE_THEME } from '@/utility/CodeTheme'
 
 // `highlights`: lineas del archivo que van subrayadas en --signal
 type CodeBlockProps = { code: string; startLine: number; label: string; highlights?: LineRange[] }
@@ -21,7 +12,7 @@ export default function CodeBlock({ code, startLine, label, highlights = [] }: C
   const marked = (line: number) => highlights.some(({ start, end }) => start <= line && line <= end)
 
   return (
-    <Highlight theme={THEME} code={code.replace(/\n$/, '')} language="python">
+    <Highlight theme={CODE_THEME} code={code.replace(/\n$/, '')} language="python">
       {({ style, tokens, getLineProps, getTokenProps }) => (
         // Se scrollea adentro de su bloque, asi que tiene que poder enfocarse
         <pre

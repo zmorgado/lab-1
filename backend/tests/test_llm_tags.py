@@ -18,6 +18,7 @@ from snippet_search.llm_tags import (
     ERROR_EMPTY_SOURCE,
     ERROR_LLM_AUTH,
     ERROR_LLM_MALFORMED,
+    ERROR_LLM_NOT_CONFIGURED,
     ERROR_LLM_QUOTA,
     ERROR_LLM_UNAVAILABLE,
     KIND_SYNTACTIC,
@@ -264,7 +265,7 @@ async def test_empty_source_is_rejected_before_spending_quota() -> None:
     assert exc.value.fallback is None
 
 
-async def test_without_a_key_the_service_answers_llm_unavailable() -> None:
+async def test_without_a_key_the_service_answers_llm_not_configured() -> None:
     def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
         raise AssertionError("no key: the LLM must not be called")
 
@@ -274,8 +275,10 @@ async def test_without_a_key_the_service_answers_llm_unavailable() -> None:
     with pytest.raises(LlmTagError) as exc:
         await GeminiTagService(keyless, client=client).extract(SNIPPET)
 
-    # El LLM es un complemento: el cliente cae al grep, el resto del back anda
-    assert exc.value.code == ERROR_LLM_UNAVAILABLE
+    # El LLM es un complemento: el cliente cae al grep, el resto del back anda.
+    # El code lo separa de una caida del proveedor: es configuracion, no red
+    assert exc.value.code == ERROR_LLM_NOT_CONFIGURED
+    assert exc.value.status_code == 503
     assert exc.value.fallback == "grep"
 
 

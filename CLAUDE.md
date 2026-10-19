@@ -98,15 +98,15 @@ Everything in this section lives under `frontend/`, and the paths below are rela
 
 React 19, Vite 8, Tailwind v4 (via `@tailwindcss/vite`, not a PostCSS config), axios, and `prism-react-renderer` for highlighting. One page, no router. `@/` is aliased to `src/` in both `vite.config.ts` and the tsconfigs — use it rather than deep relative paths.
 
-The page talks only to our backend, at `VITE_API_URL` (default `http://127.0.0.1:8000`, `src/constants/api.ts`), and knows nothing about GitHub's API. #38 built it, #22 added tag editing and #43 the result explanations; filters (#19) and the error taxonomy (#9) are still to come.
+The page talks only to our backend, at `VITE_API_URL` (default `http://127.0.0.1:8000`, `src/constants/api.ts`), and knows nothing about GitHub's API. #38 built it, #22 added tag editing, #43 the result explanations and #9 the error taxonomy: the backend's stable `code` is what the page turns into copy, never GitHub's prose. Filters (#19) are still to come.
 
 The directory names encode a layering that is worth respecting:
 
 - `jsons/` — raw backend shapes, mirroring `/openapi.json` with only the fields read. `types/` — domain shapes the UI consumes.
 - `model/` — no classes; `model/Search.ts` is the raw→domain mapping, and the boundary between `jsons/` and `types/` is crossed **here and only here**. Grouping results by repository happens here too.
 - `services/` — axios calls. `common.ts::getAxiosData` is the single error funnel: every failed call becomes an `ApiError` carrying the backend's stable `code` (if any) and the status, or `null` for no response. Callers never touch `AxiosError`.
-- `utility/` — pure helpers. `TagEdits.ts` toggles and adds tags on the domain shape. `ErrorCopy.ts` keys the user-facing copy by `code`; an unreachable backend has its own line, anything else a generic one, and neither the backend's `message` nor GitHub's text is ever shown. The model's failures on the results step have their own copy there, since the search itself didn't fail.
-- `components/`, `pages/` — presentation. `pages/Search.tsx` holds the step state and the two calls.
+- `utility/` — pure helpers. `TagEdits.ts` toggles and adds tags on the domain shape. `ErrorCopy.ts` keys the user-facing copy by `code`, and also how each failure is printed: a `Severity` per code (`correctable` → the user changes the snippet or the tags, `transient` → nobody, wait, `setup` → whoever runs the service fixes a credential), a short type label and a one-line note per family. Neither the backend's `message` nor GitHub's text is ever shown. The model's failures on the results step have their own copy there, since the search itself didn't fail.
+- `components/`, `pages/` — presentation. `pages/Search.tsx` holds the step state and the two calls. `components/StatusLine.tsx` prints a failure as a typed line — tone, type and stable code, then the copy — and `components/ErrorDialog.tsx` opens the type's family in a native `<dialog>` when that label is clicked.
 
 There is no `README.md`: #2 renamed the stock Vite template readme to `FRONTEND.md` (now `frontend/FRONTEND.md`) and replaced it with real frontend docs.
 
@@ -122,12 +122,12 @@ Both waits count elapsed seconds and lock the controls. Nothing found is a plain
 
 ### Visual system
 
-The token layer at the top of `src/index.css` is the portfolio's (`zmorgado/portfolio`, `app/globals.css`), copied verbatim; its ADR 0005 owns the palette. Change it there, then copy the block down. Tailwind sees the tokens through `@theme`, with its own palette and font stacks reset to `initial`, so `text-pencil` exists and `text-slate-600` doesn't. No raw hex outside that file (the favicon carries literals, with a comment saying why).
+The token layer at the top of `src/index.css` is the portfolio's (`zmorgado/portfolio`, `app/globals.css`), copied verbatim; its ADR 0005 owns the palette. Change it there, then copy the block down. Tailwind sees the tokens through `@theme`, with its own palette and font stacks reset to `initial`, so `text-pencil` exists and `text-slate-600` doesn't. The Python code display adds the Om Theme's syntax inks as separate tokens (`--code-*`), shared through `src/utility/CodeTheme.ts` and used only there and in `SnippetForm`, never as UI colours. No raw hex outside that file (the favicon carries literals, with a comment saying why).
 
 - Spectral for prose, IBM Plex Mono for data only: code, tags, paths, line ranges, scores, seconds.
-- `--signal` for links and the system acting (including the lines the model underlines), `--pencil` for secondary text, `--alert` at most once, on a failed step.
+- `--signal` for links, the system acting (including the lines the model underlines) and a correctable failure; `--pencil` for secondary text and a transient failure; `--alert` for a setup failure — a credential, the service, or the model key — whether it stops the step or only drops the model's tags, and at most one shows at a time. A failure always prints its type and stable code next to the tone, so colour is never the only signal (WCAG 1.4.1).
 - No shadows, no filled cards, radius at most 2px. Colour transitions only; nothing loops. The page follows the system theme.
-- Code highlighting reads the tokens too: comments and docstrings in pencil, keywords at 600, the rest ink.
+- Code highlighting reads the tokens too, but draws its inks from the Om Theme (`--code-*`): comments and docstrings in `--code-comment`, keywords and operators in `--code-keyword`, strings, functions, classes and constants in their own. The result blocks and the snippet paste box both use it. The paste box is a transparent `<textarea>` over a `Highlight` layer with the same type, so the code is coloured while you type and the textarea keeps the text, caret and scroll; both sit on the page colour, matching the site's background.
 
 ## Querying GitHub code search
 

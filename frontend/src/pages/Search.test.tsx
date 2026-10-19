@@ -55,6 +55,25 @@ describe('attaching a snippet', () => {
     await user.type(snippetBox(), '   ')
     expect(submit).toHaveProperty('disabled', true)
   })
+
+  it('colors the pasted snippet with the Om Theme behind the textarea', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<Search />)
+
+    await user.click(snippetBox())
+    await user.paste(METHOD)
+
+    // El textarea sigue siendo el dueño del texto
+    expect(snippetBox().value).toBe(METHOD)
+    // Y detras, la misma tipografia pero tokenizada con las tintas del tema
+    const layer = container.querySelector('pre[aria-hidden="true"]')
+    const keyword = layer?.querySelector('.token.keyword')
+    expect(keyword?.textContent).toBe('def')
+    expect(keyword?.getAttribute('style')).toContain('--code-keyword')
+    const fn = layer?.querySelector('.token.function')
+    expect(fn?.textContent).toBe('rank')
+    expect(fn?.getAttribute('style')).toContain('--code-function')
+  })
 })
 
 // --- confirmar los tags ------------------------------------------------------
@@ -154,13 +173,18 @@ describe('confirming the tags', () => {
     expect(tagsOf(/paradigm/i)).toEqual(['itemgetter model'])
   })
 
-  it('falls back to the AST tags, says the model was unavailable, and carries on', async () => {
+  it.each([
+    ['llm_unavailable', /model was unavailable/i],
+    ['llm_not_configured', /isn't configured on this service/i],
+    ['llm_auth', /rejected this service's api key/i],
+    ['llm_quota_exhausted', /free quota is used up/i],
+  ])('falls back to the AST tags, explains %s, and carries on', async (code, copy) => {
     server.use(
       http.post(`${API}/api/search/preview`, () =>
         HttpResponse.json({
           pool: pooled('tiers', 'seed', 'sorted', 'rank'),
           queries: [{ kind: 'tiers', tags: ['sorted', 'rank'], dropped: [], q: 'sorted rank language:python' }],
-          llm: { error: 'llm_unavailable' },
+          llm: { error: code },
           is_fallback: false,
         }),
       ),
@@ -170,9 +194,31 @@ describe('confirming the tags', () => {
 
     await proposeTags(user)
 
-    expect(await screen.findByText(/model was unavailable/i)).toBeTruthy()
+    expect(await screen.findByText(copy)).toBeTruthy()
+    // La nota del modelo tambien lleva el code, para saber de donde viene
+    expect(screen.getByText(code)).toBeTruthy()
     expect(tagsOf(/syntax tree/i)).toEqual(['sorted AST', 'rank AST'])
     expect(screen.getByRole('button', { name: /search with these tags/i })).toHaveProperty('disabled', false)
+  })
+
+  it('says the model found nothing when it ran but returned no tags', async () => {
+    server.use(
+      http.post(`${API}/api/search/preview`, () =>
+        HttpResponse.json({
+          pool: pooled('tiers', 'seed', 'sorted', 'rank'),
+          queries: [{ kind: 'tiers', tags: ['sorted', 'rank'], dropped: [], q: 'sorted rank language:python' }],
+          llm: { error: null },
+          is_fallback: false,
+        }),
+      ),
+    )
+    const user = userEvent.setup()
+    render(<Search />)
+
+    await proposeTags(user)
+
+    expect(await screen.findByText(/found nothing worth searching for/i)).toBeTruthy()
+    expect(tagsOf(/syntax tree/i)).toEqual(['sorted AST', 'rank AST'])
   })
 
   it('goes back to the snippet, kept for editing', async () => {
@@ -242,7 +288,11 @@ describe('confirming the tags', () => {
 
     await proposeTags(user)
 
-    expect((await screen.findByRole('alert')).textContent).toMatch(/isn't answering at http:\/\/127\.0\.0\.1:8000/)
+    const alert = (await screen.findByRole('alert')).textContent ?? ''
+    expect(alert).toMatch(/isn't answering at http:\/\/127\.0\.0\.1:8000/)
+    // Un servicio sin GITHUB_TOKEN muere al arrancar y nunca llega al browser:
+    // el unico lugar donde el usuario lo ve es esta copy
+    expect(alert).toMatch(/GITHUB_TOKEN/)
   })
 })
 
@@ -445,13 +495,17 @@ describe('the end of a search', () => {
     expect(await screen.findByRole('region', { name: /results/i })).toBeTruthy()
   })
 
-  it("never shows GitHub's own text when the search fails, and can go back to the tags", async () => {
+  it('never shows GitHub\'s own text when the search fails, and can go back to the tags', async () => {
     server.use(
       previewRoute(PREVIEW),
-      // Un error de GitHub viaja con su status y su body, sin code nuestro
+      // El backend clasifica la falla de GitHub en un code estable y su propio
+      // message (#9); la prosa de arriba no viaja
       http.post(`${API}/api/search`, () =>
         HttpResponse.json(
-          { message: 'API rate limit exceeded for installation ID 4242.', documentation_url: 'https://docs.github.com' },
+          {
+            code: 'rate_limited',
+            message: 'API rate limit exceeded for installation ID 4242.',
+          },
           { status: 403 },
         ),
       ),
@@ -463,7 +517,7 @@ describe('the end of a search', () => {
     await user.click(screen.getByRole('button', { name: /search with these tags/i }))
 
     const alert = await screen.findByRole('alert')
-    expect(alert.textContent).toMatch(/went wrong.*HTTP 403/)
+    expect(alert.textContent).toMatch(/wait a minute/i)
     expect(screen.queryByText(/rate limit exceeded/i)).toBeNull()
 
     await user.click(screen.getByRole('button', { name: /back to the tags/i }))
@@ -484,6 +538,84 @@ describe('the end of a search', () => {
     expect(snippetBox().value).toBe(METHOD)
     expect(snippetBox().readOnly).toBe(false)
     expect(screen.queryByRole('region', { name: /results/i })).toBeNull()
+  })
+})
+
+// --- la taxonomia de errores (#9) ---------------------------------------------
+
+describe('explaining each failure', () => {
+  // El fallo llega en el paso de busqueda, con el code que clasifico el proxy
+  async function failTheSearch(body: JsonBodyType) {
+    server.use(
+      previewRoute(PREVIEW),
+      http.post(`${API}/api/search`, () => HttpResponse.json(body, { status: 503 })),
+    )
+    const user = userEvent.setup()
+    render(<Search />)
+    await searchWithTags(user)
+    return await screen.findByRole('alert')
+  }
+
+  it.each([
+    ['unauthenticated', /credential/i, /setup problem/i],
+    ['rate_limited', /wait a minute/i, /nothing is broken/i],
+    ['query_invalid', /change a tag or the snippet/i, /rejected this search query/i],
+    ['upstream_unavailable', /isn't answering right now/i, /try again in a while/i],
+  ])('tells the user what to do about %s', async (code, actionable, about) => {
+    const alert = await failTheSearch({
+      code,
+      message: 'Backend wording that may change.',
+    })
+
+    expect(alert.textContent).toMatch(actionable)
+    expect(alert.textContent).toMatch(about)
+    // La copy sale del code, nunca del message del backend
+    expect(screen.queryByText(/backend wording/i)).toBeNull()
+  })
+
+  it.each([
+    ['query_invalid', 'Invalid query', 'correctable'],
+    ['rate_limited', 'Rate limited', 'transient'],
+    ['unauthenticated', 'Setup · GitHub token', 'setup'],
+  ])('prints %s as a typed line, with its code, not one red paragraph', async (code, label, severity) => {
+    const alert = await failTheSearch({ code, message: 'Ignored.' })
+
+    expect(alert.textContent).toMatch(label)
+    // El code queda a la vista: el tipo no es una frase, es un code estable
+    expect(alert.textContent).toMatch(code)
+    // El tono vive en la linea; el texto sigue siendo la copy y el label
+    expect(alert.querySelector(`[data-severity="${severity}"]`)).toBeTruthy()
+  })
+
+  it('opens the error type in a popup over the page', async () => {
+    const alert = await failTheSearch({ code: 'unauthenticated', message: 'Ignored.' })
+    const user = userEvent.setup()
+
+    await user.click(within(alert).getByRole('button', { name: /setup · github token/i }))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText(/setup · github token/i)).toBeTruthy()
+    expect(within(dialog).getByText(/unauthenticated/)).toBeTruthy()
+    // El popup agrega la familia: setup lo arregla quien corre el servicio
+    expect(within(dialog).getByText(/has to be fixed/i)).toBeTruthy()
+
+    await user.click(within(dialog).getByRole('button', { name: /close/i }))
+    expect((dialog as HTMLDialogElement).open).toBe(false)
+  })
+
+  it('keeps a network failure apart from a search that found nothing', async () => {
+    const alert = await failTheSearch({ code: 'upstream_unavailable', message: 'Ignored.' })
+
+    expect(alert.textContent).toMatch(/github/i)
+    expect(screen.queryByRole('region', { name: /results/i })).toBeNull()
+    expect(alert.textContent).not.toMatch(/nothing on github/i)
+  })
+
+  it('says something sensible for a code it does not know', async () => {
+    const alert = await failTheSearch({ message: 'A raw payload nobody mapped.' })
+
+    expect(alert.textContent).toMatch(/something went wrong/i)
+    expect(screen.queryByText(/raw payload/i)).toBeNull()
   })
 })
 

@@ -86,7 +86,7 @@ def test_search_code_rejects_a_blank_query(client: TestClient) -> None:
 
 
 @respx.mock
-def test_search_code_relays_githubs_error_status_and_body(client: TestClient) -> None:
+def test_search_code_classifies_a_rejected_query(client: TestClient) -> None:
     respx.get("https://api.github.com/search/code").mock(
         return_value=httpx.Response(
             422,
@@ -98,11 +98,13 @@ def test_search_code_relays_githubs_error_status_and_body(client: TestClient) ->
     response = client.get("/api/search/code", params={"q": '"foo"'})
 
     assert response.status_code == 422
-    # El body original de GitHub sobrevive: #9 lo mapea a codigos estables
+    # El status se conserva, pero el cliente recibe el code estable, no el body
+    # de GitHub: la prosa de arriba puede cambiar sin aviso (#9)
     assert response.json() == {
-        "message": "Validation Failed",
-        "errors": [{"message": "Only 256 chars"}],
+        "code": "query_invalid",
+        "message": "GitHub rejected the search query. Change the tags or the snippet and try again.",
     }
+    assert "Validation Failed" not in response.text
 
 
 @respx.mock
@@ -118,6 +120,7 @@ def test_rate_limit_headers_survive_an_error(client: TestClient) -> None:
     response = client.get("/api/search/code", params={"q": '"foo"'})
 
     assert response.status_code == 403
+    assert response.json()["code"] == "rate_limited"
     # Justo cuando mas importa saber cuanto queda
     assert response.headers["x-ratelimit-remaining"] == "0"
     assert response.headers["x-ratelimit-reset"] == "1790074284"
@@ -227,6 +230,33 @@ def test_an_unreachable_github_becomes_a_502(client: TestClient) -> None:
     response = client.get("/api/search/code", params={"q": '"foo"'})
 
     assert response.status_code == 502
+    # Una falla de red es un code propio, nunca un resultado vacio (#9)
+    assert response.json()["code"] == "upstream_unavailable"
+
+
+@respx.mock
+def test_a_rejected_credential_is_reported_as_a_configuration_problem(
+    client: TestClient,
+) -> None:
+    respx.get("https://api.github.com/search/code").mock(
+        return_value=httpx.Response(401, json={"message": "Bad credentials"})
+    )
+
+    response = client.get("/api/search/code", params={"q": '"foo"'})
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "unauthenticated"
+    # La copy habla de configuracion, no de la query del usuario
+    assert "credential" in response.json()["message"].lower()
+    assert "Bad credentials" not in response.text
+
+
+@respx.mock
+def test_a_malformed_query_gets_the_query_invalid_code(client: TestClient) -> None:
+    response = client.get("/api/search/code", params={"q": "   "})
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "query_invalid"
 
 
 @respx.mock
@@ -315,7 +345,7 @@ def test_search_returns_the_tags_alongside_githubs_results(client: TestClient) -
                 "error": None,
             }
         ],
-        "llm": {"tags": None, "error": "llm_unavailable"},
+        "llm": {"tags": None, "error": "llm_not_configured"},
         "snippet": {"category": "function", "fallback": False, "lines": 2},
         "anchors": ["sorted", "items", "sort_dictionary", "lambda"],
         # Ninguno llego al AST: resultado vacio explicito (#8)

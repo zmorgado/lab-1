@@ -1,8 +1,10 @@
 import { useState, type FormEvent } from 'react'
 import Button from '@/components/Button'
+import StatusLine from '@/components/StatusLine'
 import StepHeading from '@/components/StepHeading'
 import { AST_KIND, MAX_TAG_LENGTH } from '@/constants/tags'
 import type { TagGroup, TagPreview } from '@/types/TagPreview'
+import { modelFallbackCopy } from '@/utility/ErrorCopy'
 
 const KINDS = new Map([
   ['syntactic', { label: 'Syntactic', note: 'The names a near-literal copy would share.' }],
@@ -45,13 +47,19 @@ export default function TagConfirmation({
         tags find fewer, closer files. Select the ones to search with and add your own. Each says
         whether it came from the snippet's syntax tree (AST), the model, or you.
       </p>
-      {astOnly && (
-        <p className="mt-3 max-w-prose text-base text-pencil">
-          {preview.modelError
-            ? 'The model was unavailable, so these tags come from the syntax tree alone, in one query instead of three.'
-            : 'The model found nothing worth searching for, so these tags come from the syntax tree alone.'}
-        </p>
-      )}
+      {astOnly &&
+        (preview.modelError === null ? (
+          // El modelo corrio y no encontro nada: no es una falla, es una oracion
+          <p className="mt-3 max-w-prose text-base text-pencil">{modelFallbackCopy(null)}</p>
+        ) : (
+          // Un code real: misma linea de estado que un fallo, porque dice por que
+          // los tags salen solo del AST y quien tendria que arreglarlo. El tono
+          // sale del code, asi que una clave que falta se ve como el setup rojo
+          // que es, aunque la busqueda siga con los tags del AST
+          <StatusLine code={preview.modelError} className="mt-3">
+            {modelFallbackCopy(preview.modelError)}
+          </StatusLine>
+        ))}
       {preview.textScan && (
         <p className="mt-3 max-w-prose text-base text-pencil">
           The snippet didn't parse as Python, so its AST tags come from a scan of the text instead.

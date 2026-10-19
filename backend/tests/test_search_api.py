@@ -115,7 +115,7 @@ def test_without_the_model_the_preview_offers_the_ast_query() -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert body["llm"] == {"error": "llm_unavailable"}
+    assert body["llm"] == {"error": "llm_not_configured"}
     # Por peso: el nombre propio y el dominio, despues las APIs. Los seis que
     # entran en la query van seleccionados; el resto se ofrece
     assert [(tag["tag"], tag["selected"]) for tag in body["pool"]] == [

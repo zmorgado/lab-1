@@ -1,6 +1,8 @@
-import { useState, type ChangeEvent, type FormEvent } from 'react'
+import { useRef, useState, type ChangeEvent, type FormEvent } from 'react'
+import { Highlight } from 'prism-react-renderer'
 import Button, { BUTTON } from '@/components/Button'
 import StepHeading from '@/components/StepHeading'
+import { CODE_THEME } from '@/utility/CodeTheme'
 
 type SnippetFormProps = {
   snippet: string
@@ -12,6 +14,19 @@ type SnippetFormProps = {
 
 export default function SnippetForm({ snippet, onChange, onSubmit, locked, showActions }: SnippetFormProps) {
   const [attachNote, setAttachNote] = useState<string | null>(null)
+  // El textarea es el que tiene el texto y el scroll; el color es una capa
+  // detras con la misma tipografia, y se mueve con el
+  const boxRef = useRef<HTMLTextAreaElement>(null)
+  const colorRef = useRef<HTMLPreElement>(null)
+
+  function syncScroll() {
+    const box = boxRef.current
+    const color = colorRef.current
+    if (box && color) {
+      color.scrollTop = box.scrollTop
+      color.scrollLeft = box.scrollLeft
+    }
+  }
 
   async function attach(event: ChangeEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0]
@@ -36,21 +51,48 @@ export default function SnippetForm({ snippet, onChange, onSubmit, locked, showA
       <StepHeading id="snippet-heading" step={1}>
         Snippet
       </StepHeading>
-      <textarea
-        aria-labelledby="snippet-heading"
-        value={snippet}
-        onChange={event => onChange(event.target.value)}
-        readOnly={locked}
-        rows={12}
-        wrap="off"
-        spellCheck={false}
-        autoCapitalize="off"
-        autoCorrect="off"
-        placeholder="Paste a Python function or class"
-        className="block w-full resize-y rounded-xs border border-rule bg-transparent p-3 font-mono text-sm
-                   leading-relaxed text-ink transition-colors placeholder:text-pencil read-only:text-pencil
-                   focus:border-pencil focus:outline-none"
-      />
+      <div className="relative">
+        {/* La capa de color: el mismo texto, tokenizado con el Om Theme. Va
+            aria-hidden y sin punteros porque el que manda es el textarea */}
+        <pre
+          ref={colorRef}
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 m-0 overflow-hidden rounded-xs border border-transparent p-3
+                     font-mono text-sm leading-relaxed"
+        >
+          <Highlight theme={CODE_THEME} code={snippet.replace(/\n$/, '')} language="python">
+            {({ tokens, getTokenProps }) => (
+              <code className="block min-w-max whitespace-pre">
+                {tokens.map((line, index) => (
+                  <div key={index}>
+                    {line.map((token, key) => (
+                      <span key={key} {...getTokenProps({ token })} />
+                    ))}
+                  </div>
+                ))}
+              </code>
+            )}
+          </Highlight>
+        </pre>
+        <textarea
+          ref={boxRef}
+          aria-labelledby="snippet-heading"
+          value={snippet}
+          onChange={event => onChange(event.target.value)}
+          onScroll={syncScroll}
+          readOnly={locked}
+          rows={12}
+          wrap="off"
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          placeholder="Paste a Python function or class"
+          // El texto va transparente: el color lo pone la capa de atras
+          className="relative block w-full resize-y rounded-xs border border-rule bg-transparent p-3 font-mono text-sm
+                     leading-relaxed text-transparent caret-signal transition-colors selection:bg-signal/30
+                     placeholder:text-pencil focus:border-pencil focus:outline-none"
+        />
+      </div>
       {showActions && (
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <Button primary type="submit" disabled={locked || !snippet.trim()}>

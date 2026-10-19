@@ -29,6 +29,19 @@
   --alert: #b23a28;
   --rule: #e2e0dc;
 
+  /* Las tintas de sintaxis del Om Theme, solo para el codigo Python. No
+     siguen al tema del sitio: son las del editor (keywords y operadores en
+     pink, strings en yellow, funciones en green, clases y builtins en cyan,
+     constantes en purple, parametros en orange y comentarios en comment).
+     Viven aca para que ningun componente use un color crudo */
+  --code-comment: #6272a4;
+  --code-keyword: #ff79c6;
+  --code-string: #f1fa8c;
+  --code-function: #50fa7b;
+  --code-class: #8be9fd;
+  --code-constant: #bd93f9;
+  --code-parameter: #ffb86c;
+
   /* Motion */
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --duration: 140ms;
