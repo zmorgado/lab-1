@@ -5,7 +5,7 @@ import type { PreviewResponse } from '@/jsons/PreviewResponse'
 import type { ConfirmedTagBody } from '@/jsons/SearchRequest'
 import type { SearchResponse } from '@/jsons/SearchResponse'
 import type { Explanation } from '@/types/Explanations'
-import type { RepositoryMatches, SearchOutcome, SubtreeMatch } from '@/types/SearchOutcome'
+import type { FoundBy, RepositoryMatches, SearchOutcome, SubtreeMatch } from '@/types/SearchOutcome'
 import type { TagPreview } from '@/types/TagPreview'
 
 // La frontera entre las formas crudas del backend (jsons/) y las del dominio (types/)
@@ -50,15 +50,17 @@ export const toConfirmedTags = (preview: TagPreview): ConfirmedTagBody[] =>
 // una sola vez, bajo el primero de sus `locations`, y nombra a los demas: asi un
 // fork no repite grupos enteros
 export function toSearchOutcome(raw: SearchResponse): SearchOutcome {
-  const byRepo = new Map<string, Map<string, SubtreeMatch[]>>()
+  type FileGroup = { foundBy: FoundBy[]; subtrees: SubtreeMatch[] }
+  const byRepo = new Map<string, Map<string, FileGroup>>()
   for (const result of raw.results) {
     const [home, ...others] = result.locations
     if (!home) continue
-    const files = byRepo.get(home.repo) ?? new Map<string, SubtreeMatch[]>()
+    const files = byRepo.get(home.repo) ?? new Map<string, FileGroup>()
     byRepo.set(home.repo, files)
-    const subtrees = files.get(home.path) ?? []
-    files.set(home.path, subtrees)
-    subtrees.push({
+    // Las queries son del archivo (mismo sha), asi que todos sus subarboles traen las mismas
+    const file = files.get(home.path) ?? { foundBy: result.queries, subtrees: [] }
+    files.set(home.path, file)
+    file.subtrees.push({
       rank: result.rank,
       name: result.parent ? `${result.parent}.${result.name}` : result.name,
       startLine: result.start_line,
@@ -72,11 +74,11 @@ export function toSearchOutcome(raw: SearchResponse): SearchOutcome {
 
   const repositories: RepositoryMatches[] = [...byRepo].map(([repo, files]) => {
     const ordered = [...files]
-      .map(([path, subtrees]) => {
+      .map(([path, { foundBy, subtrees }]) => {
         const sorted = subtrees.toSorted(
           (a, b) => b.cosine - a.cosine || byText(a.name, b.name) || a.startLine - b.startLine,
         )
-        return { path, bestCosine: sorted[0].cosine, subtrees: sorted }
+        return { path, bestCosine: sorted[0].cosine, foundBy, subtrees: sorted }
       })
       .sort((a, b) => b.bestCosine - a.bestCosine || byText(a.path, b.path))
     return { repo, bestCosine: ordered[0].bestCosine, files: ordered }

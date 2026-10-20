@@ -12,7 +12,10 @@ export type SubtreeMatch = {
   alsoIn: string[]
 }
 
-export type FileMatches = { path: string; bestCosine: number; subtrees: SubtreeMatch[] }
+// Una query que encontro el archivo: su tipo y el `q` tal como se mando
+export type FoundBy = { kind: string; q: string }
+
+export type FileMatches = { path: string; bestCosine: number; foundBy: FoundBy[]; subtrees: SubtreeMatch[] }
 
 export type RepositoryMatches = { repo: string; bestCosine: number; files: FileMatches[] }
 
