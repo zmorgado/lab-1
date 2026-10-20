@@ -50,6 +50,21 @@ export default function Results({ outcome, explanations, actions }: ResultsProps
           {repository.files.map(file => (
             <div key={file.path} className="mt-4">
               <h4 className="font-mono text-sm text-pencil break-all">{file.path}</h4>
+              {/* Que tags lo trajeron: el `q` entero se abre a pedido, para no tapar los resultados */}
+              {file.foundBy.length > 0 && (
+                <details className="mt-1 font-mono text-xs text-pencil">
+                  <summary className="cursor-pointer transition-colors hover:text-ink">
+                    found by {file.foundBy.map(query => query.kind).join(', ')}
+                  </summary>
+                  <ul className="mt-1 space-y-1">
+                    {file.foundBy.map(query => (
+                      <li key={query.kind} className="break-all">
+                        {query.kind}: {query.q}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
               {file.subtrees.map(subtree => (
                 <Subtree
                   key={`${subtree.startLine}-${subtree.name}`}

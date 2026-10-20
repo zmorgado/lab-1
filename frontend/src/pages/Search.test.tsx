@@ -873,3 +873,31 @@ describe('explaining the results', () => {
     expect(within(method).queryByText('Value')).toBeNull()
   })
 })
+
+// --- que query encontro cada archivo (#1) ------------------------------------
+
+describe('a file', () => {
+  it('says which queries found it, with each query in full behind it', async () => {
+    stubSearch({
+      results: [
+        {
+          ...result(1, 0.9, 'rank', [1, 2], [at('a-org/x', 'x.py')]),
+          queries: [
+            { kind: 'syntactic', q: 'sorted items language:python' },
+            { kind: 'conceptual', q: '"sort by value" ranking language:python' },
+          ],
+        },
+      ],
+    })
+    const user = userEvent.setup()
+    render(<Search />)
+    await searchWithTags(user)
+
+    const summary = await screen.findByText('found by syntactic, conceptual')
+    const details = summary.closest('details')
+
+    // Cerrado de entrada: el `q` entero no tapa los resultados
+    expect(details?.open).toBe(false)
+    expect(within(details!).getByText('conceptual: "sort by value" ranking language:python')).toBeTruthy()
+  })
+})
