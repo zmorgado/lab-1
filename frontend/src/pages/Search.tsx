@@ -100,11 +100,21 @@ export default function Search() {
           Snippet search
         </h1>
         <p className="mt-4 max-w-prose text-xl leading-normal">
-          Paste a Python function or class, and this page looks for code on GitHub that does the same
-          thing, even when it is written differently.
+          Paste a Python snippet, and this page looks for code on GitHub conceptually and functionally
+          similar regardless of syntax deviation from the original code. Conceptual and functional
+          similarity is computed by vector embeddings and cosine similarity on{' '}
+          <a
+            href="https://arxiv.org/html/2203.03850v1#S3"
+            target="_blank"
+            rel="noreferrer"
+            className="text-alert border-alert hover:border-alert"
+          >
+            UnixCoder
+          </a>.
         </p>
         <p className="mt-4 max-w-prose text-pencil">
-          First it proposes the tags it will search with, and you confirm them. Then it ranks what it
+          First it proposes the tags it will search with: you can add, edit, and finally confirm them.
+          Lastly it ranks what it
           finds by how close each piece of code is to yours. Python only. A search takes tens of
           seconds, and its GitHub budget is shared by everyone using the page: about three searches a
           minute between all of you.
