@@ -1,10 +1,11 @@
 import { useId, type ReactNode } from 'react'
 import CodeBlock from '@/components/CodeBlock'
 import Elapsed from '@/components/Elapsed'
+import StatusLine from '@/components/StatusLine'
 import StepHeading from '@/components/StepHeading'
 import type { Explanation, Explanations } from '@/types/Explanations'
 import type { SearchOutcome, SubtreeMatch } from '@/types/SearchOutcome'
-import { explanationCopy } from '@/utility/ErrorCopy'
+import { errorCode, explanationCopy } from '@/utility/ErrorCopy'
 
 type ResultsProps = { outcome: SearchOutcome; explanations: Explanations; actions: ReactNode }
 
@@ -23,8 +24,17 @@ export default function Results({ outcome, explanations, actions }: ResultsProps
         </p>
       ) : (
         <p className="max-w-prose text-base text-pencil">
-          Repositories in order of their closest match. The cosine compares each piece of code with yours
-          in UniXcoder's embedding space: the closer to 1, the more alike they are.
+          Repositories in order of their closest match. The cosine compares each piece of code with
+          yours in{' '}
+          <a
+            href="https://arxiv.org/html/2203.03850v1#S3"
+            target="_blank"
+            rel="noreferrer"
+            className="text-alert border-alert hover:border-alert"
+          >
+            UniXcoder
+          </a>
+          's embedding space: the closer to 1, the more alike they are.
         </p>
       )}
       {/* Las explicaciones llegan despues, sin frenar la lista (#43) */}
@@ -35,17 +45,25 @@ export default function Results({ outcome, explanations, actions }: ResultsProps
           still sets the order. The lines it found most interesting are underlined.
         </p>
       )}
-      {/* Una oracion comun, como no encontrar nada: fallo el modelo, no el paso */}
+      {/* Una oracion comun, como no encontrar nada: fallo el modelo, no el paso.
+          El tono lo pone el code, igual que en el paso 2: una clave que falta es
+          un setup rojo, no una nota callada */}
       {explanations.status === 'failed' && (
-        <p className="mt-2 max-w-prose text-base text-pencil">{explanationCopy(explanations.error)}</p>
+        <StatusLine code={errorCode(explanations.error)} className="mt-2">
+          {explanationCopy(explanations.error)}
+        </StatusLine>
       )}
       <div className="mt-4 flex flex-wrap items-center gap-2">{actions}</div>
 
-      {outcome.repositories.map(repository => (
+      {outcome.repositories.map((repository, index) => (
         <div key={repository.repo} className="mt-8 border-t border-rule pt-6">
           <div className="flex flex-wrap items-baseline justify-between gap-x-4">
             <h3 className="font-mono text-base font-medium break-all">{repository.repo}</h3>
-            <p className="font-mono text-sm text-pencil">best cosine {repository.bestCosine.toFixed(3)}</p>
+            {/* "best cosine" solo en el primer repo: el unico cuyo score es el mejor de todos */}
+            <p className="font-mono text-sm text-pencil">
+              {index === 0 ? 'best cosine' : 'cosine similarity score'}{' '}
+              {repository.bestCosine.toFixed(3)}
+            </p>
           </div>
           {repository.files.map(file => (
             <div key={file.path} className="mt-4">
@@ -102,7 +120,8 @@ function Subtree({ subtree, explanation }: { subtree: SubtreeMatch; explanation?
           <span className="text-pencil">{lines}</span>
         )}
         <span className="text-pencil">
-          cosine <span className="text-ink">{subtree.cosine.toFixed(3)}</span>
+          cosine similarity score{' '}
+          <span className="text-ink">{subtree.cosine.toFixed(3)}</span>
         </span>
       </div>
       {subtree.alsoIn.length > 0 && (

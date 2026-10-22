@@ -416,7 +416,7 @@ describe('a result', () => {
 
     const method = await screen.findByRole('article', { name: 'Ranker.rank' })
 
-    expect(within(method).getByText('0.880').parentElement?.textContent).toBe('cosine 0.880')
+    expect(within(method).getByText('0.880').parentElement?.textContent).toBe('cosine similarity score 0.880')
     expect(within(method).getByRole('link', { name: /lines 20–25/ }).getAttribute('href')).toBe(
       'https://github.com/b-org/fast/blob/abc123/src/rank.py#L20-L25',
     )
@@ -819,16 +819,21 @@ describe('explaining the results', () => {
   })
 
   it.each([
-    ['llm_quota_exhausted', 429, /used up its quota/],
-    ['llm_unavailable', 503, /isn't available/],
-    ['llm_malformed_response', 502, /couldn't explain these matches this time/],
-  ])('says plainly when the model fails with %s, and keeps the results', async (code, status, copy) => {
+    ['llm_not_configured', 503, /check GEMINI_API_KEY/, 'setup'],
+    ['llm_auth', 401, /check GEMINI_API_KEY/, 'setup'],
+    ['llm_quota_exhausted', 429, /used up its quota/, 'transient'],
+    ['llm_unavailable', 503, /check the model service/, 'setup'],
+    ['llm_malformed_response', 502, /couldn't explain these matches this time/, 'transient'],
+  ])('says plainly when the model fails with %s, and keeps the results', async (code, status, copy, severity) => {
     stubExplained(() => HttpResponse.json({ code, message: 'Gemini answered something' }, { status }))
     const user = userEvent.setup()
     render(<Search />)
     await searchWithTags(user)
 
     expect(await within(resultsRegion()).findByText(copy)).toBeTruthy()
+    // El lado pintado de la linea sigue la familia del code, como en los pasos 1 y 2
+    const line = within(resultsRegion()).getByText(copy).closest('[data-severity]') as HTMLElement
+    expect(line.getAttribute('data-severity')).toBe(severity)
     expect(screen.queryByText(/gemini answered/i)).toBeNull()
     expect(screen.queryByRole('alert')).toBeNull()
     expect(screen.getAllByRole('article')).toHaveLength(5)

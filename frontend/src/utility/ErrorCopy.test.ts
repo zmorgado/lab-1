@@ -5,6 +5,7 @@ import {
   copyForCode,
   errorCode,
   errorCopy,
+  explanationCopy,
   modelFallbackCopy,
   severityFor,
   typeLabel,
@@ -50,12 +51,13 @@ describe('the frontend error taxonomy', () => {
     expect(copyForCode('unauthenticated')).toMatch(/GITHUB_TOKEN/)
     expect(copyForCode('llm_not_configured')).toMatch(/GEMINI_API_KEY/)
     expect(copyForCode('llm_auth')).toMatch(/GEMINI_API_KEY/)
+    // Un modelo que no responde no se arregla esperando: lo mira quien corre el servicio
+    expect(copyForCode('llm_unavailable')).toMatch(/whoever runs it/i)
   })
 
   it('tells the user to wait for a transient failure', () => {
     expect(copyForCode('rate_limited')).toMatch(/wait/i)
     expect(copyForCode('llm_quota_exhausted')).toMatch(/wait/i)
-    expect(copyForCode('llm_unavailable')).toMatch(/try again in a while/i)
   })
 
   it('has its own copy for a backend that never answered', () => {
@@ -87,6 +89,7 @@ describe('how a failure is printed', () => {
     // Lo arregla quien corre el servicio
     expect(severityFor('unauthenticated')).toBe('setup')
     expect(severityFor('llm_not_configured')).toBe('setup')
+    expect(severityFor('llm_unavailable')).toBe('setup')
   })
 
   it('treats an unknown code as setup, so a human looks at it', () => {
@@ -110,5 +113,17 @@ describe('the model fallback note', () => {
     expect(modelFallbackCopy('llm_auth')).toMatch(/rejected/i)
     expect(modelFallbackCopy('llm_quota_exhausted')).toMatch(/quota/i)
     expect(modelFallbackCopy('llm_unavailable')).toMatch(/unavailable/i)
+  })
+})
+
+describe('the explanation failure note', () => {
+  it('names the setup fix when there is no model to digest the candidates', () => {
+    expect(explanationCopy(new ApiError('llm_not_configured', 503))).toMatch(/GEMINI_API_KEY/)
+    expect(explanationCopy(new ApiError('llm_auth', 401))).toMatch(/GEMINI_API_KEY/)
+    expect(explanationCopy(new ApiError('llm_quota_exhausted', 429))).toMatch(/quota/i)
+    expect(explanationCopy(new ApiError('llm_unavailable', 503))).toMatch(/check the model service/i)
+    // Un code desconocido tambien se dice, y siempre se aclara que el orden no cambia
+    expect(explanationCopy(new ApiError('who_knows', 500))).toMatch(/couldn't explain/i)
+    expect(explanationCopy(new ApiError('llm_not_configured', 503))).toMatch(/ranking doesn't depend/i)
   })
 })

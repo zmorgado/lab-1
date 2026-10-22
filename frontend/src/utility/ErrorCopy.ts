@@ -15,8 +15,8 @@ import { ApiError } from '@/services/common'
 // - modelo (#7): `empty_source` y los `llm_*`.
 //
 // Un problema de *configuracion* (`unauthenticated`, `llm_not_configured`,
-// `llm_auth`) dice que lo arregle quien corre el servicio; una caida pasajera
-// (`rate_limited`, `llm_quota_exhausted`, `llm_unavailable`) dice que espere.
+// `llm_auth`, `llm_unavailable`) dice que lo arregle quien corre el servicio;
+// una caida pasajera (`rate_limited`, `llm_quota_exhausted`) dice que espere.
 const COPY: Record<string, string> = {
   // --- transporte -----------------------------------------------------------
 
@@ -51,7 +51,8 @@ const COPY: Record<string, string> = {
     "This app's model key was rejected. That is a setup problem on the service's side, not your snippet: tell whoever runs it to check GEMINI_API_KEY.",
   llm_quota_exhausted:
     "The model's free quota is used up for now. Nothing is broken: wait a bit and try again.",
-  llm_unavailable: "The model isn't answering right now. Try again in a while.",
+  llm_unavailable:
+    "This app's model isn't answering, and it doesn't come back on its own. That is a setup problem on the service's side: tell whoever runs it to check the model service.",
   llm_malformed_response:
     "The model answered in a way this app couldn't read. Try again; if it keeps happening, tell whoever runs it.",
   llm_request_failed: "The model request didn't go through. Try again in a while.",
@@ -84,7 +85,6 @@ const SEVERITY: Record<string, Severity> = {
   // Nada que arreglar: el presupuesto compartido o el proveedor estan ocupados
   rate_limited: 'transient',
   llm_quota_exhausted: 'transient',
-  llm_unavailable: 'transient',
   llm_request_failed: 'transient',
   llm_malformed_response: 'transient',
   upstream_unavailable: 'transient',
@@ -93,6 +93,7 @@ const SEVERITY: Record<string, Severity> = {
   unauthenticated: 'setup',
   llm_not_configured: 'setup',
   llm_auth: 'setup',
+  llm_unavailable: 'setup',
   service_unreachable: 'setup',
 }
 
@@ -174,10 +175,24 @@ export function modelFallbackCopy(code: string | null): string {
   }
 }
 
-// Las explicaciones de los resultados (#43): fallo el modelo, no la busqueda
+// Las explicaciones de los resultados (#43): fallo el modelo, no la busqueda.
+// La taxonomia entra aca igual que en los tags: un code estable, y segun la
+// familia quien tiene que actuar. `llm_not_configured` y `llm_auth` son de
+// configuracion: se arreglan del lado del servicio, no esperando
 const EXPLANATION_COPY = new Map<string, string>([
+  [
+    'llm_not_configured',
+    "This app's model key is missing, so these matches go unexplained. That is a setup problem on the service's side: tell whoever runs it to check GEMINI_API_KEY.",
+  ],
+  [
+    'llm_auth',
+    "This app's model key was rejected, so these matches go unexplained. That is a setup problem on the service's side: tell whoever runs it to check GEMINI_API_KEY.",
+  ],
   ['llm_quota_exhausted', 'The model has used up its quota for now, so these matches go unexplained.'],
-  ['llm_unavailable', "The model isn't available, so these matches go unexplained."],
+  [
+    'llm_unavailable',
+    "This app's model isn't answering, so these matches go unexplained. That is a setup problem on the service's side: tell whoever runs it to check the model service.",
+  ],
 ])
 
 export function explanationCopy(error: unknown): string {
