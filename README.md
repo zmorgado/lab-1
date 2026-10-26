@@ -1,68 +1,113 @@
-# Architectural Synergy: Agentic Coding & Empirical Code Retrieval
+# LAB #1 — Find GitHub code that does the same thing
 
-## 1. Overview & Problem Statement: Breaking the Agentic Circular Loop
+Paste a Python snippet and get back ranked, functionally similar code from public GitHub repositories.
 
-In traditional agentic software engineering workflows, the interaction between a human developer and an LLM coding assistant often degrades into a **closed, self-referential feedback loop**. When an LLM proposes an inefficient design pattern, an obsolete API construct, or a subtle algorithmic flaw, subsequent debugging turns frequently iterate within the agent's internal biases and static training distribution.
+The pipeline reduces the snippet to searchable tags, runs those tags through GitHub's code search one query at a time, isolates the matching functions and classes, and ranks them with UniXcoder embeddings and cosine similarity. The LLM is a complement: it expands the tags and explains the results, but the search still works without it.
 
-This project breaks that circular dynamic by introducing **Empirical Code Retrieval**—a deterministic and neural search pipeline that continuously feeds verified, real-world open-source code snippets into the human-agent context window.
+## Quick start
+
+Requirements: Python 3.12 with [uv](https://docs.astral.sh/uv/) for the backend, and Node.js with [pnpm](https://pnpm.io/) for the frontend.
+
+### Backend
+
+The service **will not start without a GitHub token**, because `search/code` rejects anonymous requests. The token can come from `GITHUB_TOKEN`, `backend/.env`, or an authenticated `gh` CLI, in that order.
+
+```sh
+cd backend
+
+# Option A: export the token for this shell
+export GITHUB_TOKEN=$(gh auth token)
+
+# Option B: keep it in backend/.env (gitignored)
+cp .env.example .env   # then fill in GITHUB_TOKEN
+
+uv sync
+uv run snippet-search  # http://127.0.0.1:8000
+```
+
+`GEMINI_API_KEY` is optional. With it, the model expands the tags and explains each result; without it, the backend starts normally, the search uses AST tags only, and the explanation step is unavailable. See [`backend/.env.example`](backend/.env.example).
+
+### Frontend
+
+```sh
+cd frontend
+pnpm install
+pnpm dev               # http://localhost:5173
+```
+
+The page calls the backend at `VITE_API_URL` (`http://127.0.0.1:8000` by default; override it in `frontend/.env.local`). The backend's CORS allows the Vite dev server on port 5173.
+
+### Tests
+
+The commands are separate and neither runs the other. Neither needs a token or a network connection.
+
+```sh
+cd backend && uv run pytest    # Python service
+cd frontend && pnpm test       # Vitest
+```
+
+## How the pipeline works
+
+1. **Tags.** The snippet is parsed with Python's `ast` (with a regex fallback when it doesn't parse) and reduced to three tiers: APIs (imports and calls), structures (its own `def`/`class` names and lambdas) and domain words (docstrings and comments). If the model is configured, it adds `syntactic`, `conceptual` and `paradigm` tags. The tags merge into one weighted pool that the user can edit before searching.
+2. **Queries.** Each tag kind becomes one `search/code` query, capped at 6 tags and 256 characters. The queries run **one after another**, not in parallel, because GitHub asks for serial requests to avoid secondary rate limits. Without the model — or when it returns nothing searchable — there is a single `tiers` query built from the AST tags.
+3. **Code search.** GitHub returns repo, path and blob `sha`, but not the file contents. Candidate files are deduplicated by `sha`, private repositories are excluded, and the first 20 files are fetched through the authenticated proxy.
+4. **AST isolation.** Each candidate file is cut down to top-level functions and methods (or top-level classes for a class snippet), keeping only subtrees that have a name, a real body, at least one matching anchor, and a length close to the snippet's. This is the stage that removes imports, headers and unrelated boilerplate.
+5. **Embeddings.** The snippet and the surviving subtrees are embedded with `microsoft/unixcoder-base` into 768-dimensional vectors. Cosine similarity ranks them, which is what catches code that does the same thing with different text.
+6. **Results.** The top results (10 by default, up to 50) are returned with rank, score, repo, path, line range and source. A public blob found in several repos is shown once. After the search, the model can explain what each result offers next to the snippet.
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        CLOSED AGENTIC LOOP                             │
-│   User Prompt  ──►  LLM Code Generation  ──►  Suboptimal / Hallucinated│
-│        ▲                                             Pattern           │
-│        └────────────────── Debugging Turn ───────────────┘             │
-└────────────────────────────────────────────────────────────────────────┘
-                                   │
-                                   ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                   EMPIRICAL RETRIEVAL GROUNDING                        │
-│   Query Snippet  ──►  AST/LLM Tagging  ──►  GitHub Multi-Dispatch      │
-│                                                     │                  │
-│   Verified References  ◄──  UniXcoder Vector ◄── Tree-sitter Pruning   │
-│   (Real-world Code)         Verification (R⁷⁶⁸)                        │
-└────────────────────────────────────────────────────────────────────────┘
+Pasted snippet
+      │
+      ▼
+AST tags (APIs / structures / domain words) ──► optional LLM tags
+      │                                              │
+      └──────────────► tag pool, edited by the user ◄┘
+                              │
+                              ▼
+       syntactic / conceptual / paradigm queries
+       (one `tiers` query when the model is unavailable)
+                              │
+                              ▼  serial requests
+                    GitHub code search
+                              │
+                              ▼
+             dedupe by sha, drop private repos
+                              │
+                              ▼
+        tree-sitter subtree isolation and pruning
+                              │
+                              ▼
+        UniXcoder embeddings ──► cosine ranking
+                              │
+                              ▼
+                  ranked code references
+                              │
+                              ▼
+           optional LLM explanation per result
 ```
 
----
+## Why retrieval
 
-## 2. Key Architectural Pillars
+GitHub's code search matches 3-character trigrams, so it finds files that share *words* with the snippet, not files that *do the same thing*. `lambda t: t[1]` and `operator.itemgetter(1)` are the same function to us and different text to the index.
 
-### A. Escaping Syntactic & Conceptual Biases
-Instead of relying on a single monolithic search string—which triggers GitHub API `AND`-operator over-filtering and recall collapse—the pipeline splits query formulation into **three parallel search channels**:
-1. **Syntactic Query (Exact Symbol Co-occurrence):** Targets literal AST anchors (`apis`, `structures`, `data_structures`).
-2. **Conceptual Query (Intent & Docstring Abstraction):** Targets high-level problem statements and unquoted natural language intent keywords.
-3. **Paradigm Query (Cross-Framework Alternatives):** Replaces standard library primitives with alternative ecosystem frameworks (`pandas`, `scipy`, `torch`, `faiss`) and functional paradigms (`operator.itemgetter`, `lambda`).
+The embedding stage exists to close that gap. AST structure and search tags cut the candidate space down cheaply and imprecisely; UniXcoder and cosine similarity then compare the snippet and each surviving subtree by meaning. The result is a reference grounded in code that already exists publicly, rather than one generated from the model's training distribution.
 
-### B. High-Precision AST Subtree Isolation (Stage 4)
-Using Tree-sitter byte-offset slicing (`start_byte` to `end_byte`), candidate files retrieved from GitHub are pruned down to top-level `function_definition` and `class_definition` subtrees. Channel-aware filtering prevents boilerplate code (unused imports, headers) from diluting downstream representations while allowing paradigm-equivalent candidates to pass through to vector scoring.
+There is no vector store: candidates are embedded on demand and discarded after the search.
 
-### C. Continuous Latent Space Verification (Stage 5)
-Isolated subtrees are converted into dense 768-dimensional normalized vectors ($\mathbf{v} \in \mathbb{R}^{768}$) using **UniXcoder-base** in `<encoder-only>` mode. Pairwise Cosine Similarity ($\text{Sim}_{\text{semantic}}(a, b) = \mathbf{v}_a \cdot \mathbf{v}_b$) verifies functional and semantic equivalence, ensuring that only high-integrity code implementations are presented as references.
-
----
-
-## 3. Human-Agent Synergy & In-Context Learning
-
-By pairing real-world retrieval with LLM generation, the system establishes a dual-inference workflow:
-
-* **For the Human Developer:** Serves as an architectural reference engine, discovering alternative implementation paradigms, benchmarked data structures, and production-tested patterns from top open-source repositories.
-* **For the LLM / Coding Agent:** Acts as a dynamic Few-Shot In-Context Prompting mechanism. Injecting UniXcoder-verified reference snippets directly into the agent's prompt context grounds code generation, prevents API hallucination, and elevates structural design quality.
-
----
-
-## 4. Pipeline Execution Summary
+## Repository layout
 
 ```
-Input Snippet (a) ──► AST Seed Extractor (Regex Fallback) ──► LLM Semantic Expansion
-                                                                        │
-┌───────────────────────────────────────────────────────────────────────┘
-▼
-Multi-Query Dispatch ──► GitHub Search API ──► Tree-sitter Subtree Pruner
-                                                        │
-                                                        ▼
-                                       UniXcoder Embedding Engine (ℝ⁷⁶⁸)
-                                                        │
-                                                        ▼
-                                       Top-k Verified Reference Snippets
+backend/   FastAPI service and every pipeline stage (uv)
+frontend/  React + TypeScript + Vite page (pnpm)
+docs/      research notes, diagrams and agent documentation
 ```
+
+## Documentation
+
+- [`BACKEND.md`](BACKEND.md) — endpoints, pipeline stages, configuration, error codes and backend commands.
+- [`frontend/FRONTEND.md`](frontend/FRONTEND.md) — the three-step UI, frontend commands and frontend tests.
+- [`docs/research/`](docs/research/) — the design sources: AST subtree sorting, UniXcoder verification and the reference PDFs.
+- [`docs/diagrams/lab-1.architecture.html`](docs/diagrams/lab-1.architecture.html) — the architecture diagram, generated from the JSON beside it.
+- [Issue #1](https://github.com/zmorgado/lab-1/issues/1) — the project's spec and ticket map.
+
+This README is an overview. `BACKEND.md`, `FRONTEND.md` and `docs/research/` are the source of truth for the technical detail.
