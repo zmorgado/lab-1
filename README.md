@@ -1,4 +1,4 @@
-# LAB #1 — Find GitHub code that does the same thing
+# LAB #1 — Functional code snippet search on GitHub
 
 Paste a Python snippet and get back ranked, functionally similar code from public GitHub repositories.
 
