@@ -4,6 +4,14 @@ Paste a Python snippet and get back ranked, functionally similar code from publi
 
 The pipeline reduces the snippet to searchable tags, runs those tags through GitHub's code search one query at a time, isolates the matching functions and classes, and ranks them with UniXcoder embeddings and cosine similarity. The LLM is a complement: it expands the tags and explains the results, but the search still works without it.
 
+## Objective
+
+The project's objective is to break the circular correction dynamic that appears when a developer and a coding agent iterate only on the model's own output. A design is generated, reviewed, corrected and regenerated, but the next turn still starts from the model's assumptions and training distribution, so the loop tends to reproduce the same kind of mistake.
+
+LAB #1 interrupts that loop by putting external code in front of the agent user: code that differs in implementation but solves a similar problem, retrieved from public repositories instead of generated. The user can paste the snippet under discussion, confirm the tags, and bring the ranked references back into the conversation as concrete comparisons for the scenario at hand — a data structure, an API pattern, a parsing routine, a concurrency model, and so on. The references are evidence from code that already exists, not another model proposal.
+
+Today this is a manual step: the page returns the references and the user decides what to bring back into the agent's context. There is no plugin, MCP server or agent skill in this version.
+
 ## Quick start
 
 Requirements: Python 3.12 with [uv](https://docs.astral.sh/uv/) for the backend, and Node.js with [pnpm](https://pnpm.io/) for the frontend.
