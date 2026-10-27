@@ -2,14 +2,13 @@
 
 Asegura que 'src/' este en sys.path antes de importar el paquete.
 
-El paquete se instala editable (src layout), pero eso no alcanza: algunos builds
-de python.org (3.12.8 aca) saltean los .pth cuyo nombre arranca con '_'
-("Skipping hidden .pth file"), y el editable se instala justamente como
-'_editable_impl_snippet_search.pth' con la ruta a src/ adentro. Queda
-ignorado y el import de snippet_search falla aunque el archivo este bien.
+El paquete se instala editable (src layout), pero eso no alcanza: python 3.12.8
+saltea los .pth que tienen el flag 'hidden' de macOS ("Skipping hidden .pth
+file"), y si la .venv lo tiene, el editable ('_editable_impl_snippet_search.pth',
+con la ruta a src/ adentro) queda ignorado y el import de snippet_search falla
+aunque el archivo este bien.
 
-Asegurar la ruta aca hace que la suite no dependa de ese detalle del
-interprete. Ver BACKEND.md.
+Asegurar la ruta aca hace que la suite no dependa de ese flag. Ver BACKEND.md.
 """
 
 import sys
