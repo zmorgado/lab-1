@@ -52,16 +52,17 @@ uv run pytest           # run the test suite — exits non-zero on failure
 use uvicorn directly: `uv run uvicorn snippet_search.main:app --reload`.
 
 **If either command dies with `ModuleNotFoundError: No module named
-'snippet_search'`, prefix it with `PYTHONPATH=src`.** Some python.org builds
-(3.12.8 here) skip `.pth` files whose name begins with `_`, and the editable
-install is exactly `_editable_impl_snippet_search.pth` with `src/` inside it,
-so the package never reaches `sys.path`. It is an interpreter quirk, not a
-project misconfiguration, and `uv sync` regenerates the same file each time:
+'snippet_search'`, the venv carries macOS's `hidden` flag.** Python 3.12.8
+skips every `.pth` file with that flag (`python -v` prints "Skipping hidden .pth
+file"), the editable install's `_editable_impl_snippet_search.pth` included, so
+`src/` never reaches `sys.path`. `ls -lO .venv` shows the flag. Clear it once:
 
 ```
-PYTHONPATH=src uv run uvicorn snippet_search.main:app --port 8000
+chflags -R nohidden .venv
 ```
 
+`uv sync` doesn't set it: a reinstall writes the `.pth` without the flag. Until
+it's cleared, `PYTHONPATH=src` in front of a command works around it.
 `uv run pytest` is unaffected — `tests/conftest.py` sets the path itself.
 
 ## The credential
@@ -199,8 +200,8 @@ uv run python scripts/tester.py scripts/word_freq_A.py scripts/word_freq_B.py
 
 It prints the similarity and a time/memory report. The runner and its inputs
 (`word_freq_A.py`, `word_freq_B.py`, `testing_snippets.txt`) live in `scripts/`,
-outside the suite, so `uv run pytest` never loads the model. On an interpreter
-with the `.pth` quirk above, prefix it with `PYTHONPATH=src`.
+outside the suite, so `uv run pytest` never loads the model. If it can't import
+`snippet_search`, clear the `hidden` flag as above.
 
 ## The search pipeline (#4)
 
@@ -532,8 +533,8 @@ FastAPI's own docs are written against, so `TestClient` works as documented.
 
 The package uses a **src layout** (`src/snippet_search/`) and `uv sync`
 installs it editable. `tests/conftest.py` still puts `src/` on `sys.path`, for the
-`.pth` reason above — without it the suite cannot import `snippet_search` at
-all on an affected interpreter. It also
+`hidden` flag above — without it the suite cannot import `snippet_search` at
+all in a flagged venv. It also
 holds the shared fixtures and points `DEFAULT_ENV_FILE` at a throwaway path, so
 the suite's result does not depend on whether you happen to have a `.env`. Tests
 live in `backend/tests/`, mirroring the module they cover, not colocated (that
