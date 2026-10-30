@@ -33,7 +33,7 @@ uv sync
 uv run snippet-search  # http://127.0.0.1:8000
 ```
 
-`GEMINI_API_KEY` is optional. With it, the model expands the tags and explains each result; without it, the backend starts normally, the search uses AST tags only, and the explanation step is unavailable. See [`backend/.env.example`](backend/.env.example).
+`GEMINI_API_KEY` is optional. With it, the model expands the tags and briefly notes the value and addable feature each result might containt in respects to the users snippet; without it, the backend starts normally, the search uses AST tags only, and the explanation step is unavailable. See [`backend/.env.example`](backend/.env.example).
 
 ### Frontend
 
